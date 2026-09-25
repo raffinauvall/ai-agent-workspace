@@ -30,6 +30,7 @@
 ## Contents
 
 - [Quick Start](#quick-start)
+- [Arch Linux](#arch-linux)
 - [Basic Usage](#basic-usage)
 - [Concept](#concept)
 - [App Tour](#app-tour)
@@ -66,6 +67,28 @@ make dev
 ```
 
 The app opens in a native 1280x800 window. The Rust backend automatically starts scanning processes and logs.
+
+### Arch Linux
+
+Arch and Manjaro need Tauri's native build dependencies before `make install`:
+
+```bash
+sudo pacman -S --needed base-devel nodejs npm rust \
+  webkit2gtk-4.1 gtk3 libayatana-appindicator librsvg patchelf
+
+git clone https://github.com/dykyi-roman/office-ai.git
+cd office-ai
+make install
+make dev
+```
+
+The `.deb` package is for Ubuntu, Debian, and other Debian-based distributions. On Arch, run the built binary directly:
+
+```bash
+./src-tauri/target/release/OfficeAI
+```
+
+If AppImage packaging fails at `linuxdeploy`, use `make dev` while developing or run the native release binary above.
 
 ---
 

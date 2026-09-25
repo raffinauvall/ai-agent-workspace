@@ -43,8 +43,17 @@ export const TAURI_COMMANDS = {
   GET_CONFIG: "get_config",
   SET_CONFIG: "set_config",
   GET_STATS: "get_stats",
+  GET_REMOTE_ACCESS: "get_remote_access",
+  START_REMOTE_ACCESS: "start_remote_access",
+  STOP_REMOTE_ACCESS: "stop_remote_access",
   GENERATE_BUG_REPORT: "generate_bug_report",
 } as const;
+
+export interface RemoteAccessInfo {
+  running: boolean;
+  url: string | null;
+  token: string;
+}
 
 // Tauri invoke command return types
 export interface AppStats {

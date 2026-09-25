@@ -183,6 +183,81 @@ function addLamp(parent: THREE.Object3D, x: number, z: number): void {
   group.add(bulb);
 }
 
+function addCityBuilding(parent: THREE.Object3D, x: number, z: number, width: number, depth: number, height: number, color: number): void {
+  const bottom = -2.72;
+  const building = box([width, height, depth], color, [x, bottom + height / 2, z], parent);
+  building.castShadow = false;
+  building.receiveShadow = false;
+  const roof = box([width * 0.9, 0.1, depth * 0.9], 0x2c4664, [x, bottom + height + 0.05, z], parent);
+  roof.castShadow = false;
+  roof.receiveShadow = false;
+  for (const row of [0.34, 0.58, 0.82]) {
+    for (const column of [-0.3, 0.3]) {
+      const window = box(
+        [0.16, 0.1, 0.025],
+        height > 1.7 ? 0xf1c56d : 0x8fc7df,
+        [x + column * width, bottom + height * row, z - depth / 2 - 0.02],
+        parent,
+      );
+      window.castShadow = false;
+      window.receiveShadow = false;
+      window.material.emissive = new THREE.Color(window.material.color.getHex());
+      window.material.emissiveIntensity = 0.35;
+    }
+  }
+}
+
+function addCityBackdrop(parent: THREE.Object3D): void {
+  const ground = box([42, 0.18, 30], 0x263b57, [0, -2.82, 0], parent);
+  ground.castShadow = false;
+  ground.receiveShadow = false;
+  const buildings: Array<[number, number, number, number, number, number]> = [
+    [-14, -10, 2.4, 2.4, 1.7, 0x465e78],
+    [-10, -10, 2.1, 2.5, 2.2, 0x354d69],
+    [-6, -10, 2.8, 2.2, 1.3, 0x526a80],
+    [-2, -10, 2.2, 2.6, 2.3, 0x3d5873],
+    [3, -10, 2.5, 2.3, 1.6, 0x4c647d],
+    [8, -10, 2.2, 2.5, 2.0, 0x344b67],
+    [13, -10, 2.7, 2.3, 1.4, 0x536b83],
+    [-14, -5, 2.3, 2.4, 2.0, 0x3b536d],
+    [-14, 0, 2.7, 2.2, 1.4, 0x506982],
+    [-14, 5, 2.2, 2.5, 1.8, 0x3e5871],
+    [14, -5, 2.4, 2.4, 1.5, 0x4d657d],
+    [14, 0, 2.8, 2.2, 2.1, 0x354d69],
+    [14, 5, 2.1, 2.5, 1.3, 0x536b83],
+    [-12, 10, 2.5, 2.2, 1.5, 0x405a73],
+    [-7, 10, 2.8, 2.5, 2.1, 0x526a80],
+    [-2, 10, 2.2, 2.3, 1.3, 0x3b536d],
+    [3, 10, 2.6, 2.4, 1.9, 0x4d657d],
+    [8, 10, 2.1, 2.5, 1.4, 0x354d69],
+    [13, 10, 2.8, 2.3, 2.2, 0x536b83],
+  ];
+  buildings.forEach(([x, z, width, depth, height, color]) => addCityBuilding(parent, x, z, width, depth, height, color));
+}
+
+function addCloud(parent: THREE.Object3D, x: number, y: number, z: number, scale: number): void {
+  const group = new THREE.Group();
+  group.position.set(x, y, z);
+  group.scale.setScalar(scale);
+  parent.add(group);
+  const cloudMaterial = new THREE.MeshStandardMaterial({ color: 0xf3f7fb, roughness: 1, flatShading: true });
+  for (const [offsetX, offsetY, radius] of [[-0.65, 0, 0.55], [0, 0.18, 0.72], [0.7, 0, 0.5]] as const) {
+    const puff = new THREE.Mesh(new THREE.IcosahedronGeometry(radius, 1), cloudMaterial);
+    puff.position.set(offsetX, offsetY, 0);
+    puff.castShadow = false;
+    puff.receiveShadow = false;
+    group.add(puff);
+  }
+}
+
+function addClouds(parent: THREE.Object3D): void {
+  addCloud(parent, -10, 5.1, -7.8, 1.1);
+  addCloud(parent, 9.5, 4.8, -8.4, 1.25);
+  addCloud(parent, -11.5, 4.4, 5.2, 0.9);
+  addCloud(parent, 11.5, 5.4, 3.4, 1.05);
+  addCloud(parent, 0, 6.2, -11.5, 1.35);
+}
+
 function addWindow(parent: THREE.Object3D, x: number, y: number, z: number, width: number): void {
   const glass = box([width, 1.5, 0.04], 0x173b68, [x, y, z], parent);
   glass.material.roughness = 0.15;
@@ -214,23 +289,83 @@ function addDesk(parent: THREE.Object3D, position: THREE.Vector3): void {
 }
 
 function addMeetingArea(parent: THREE.Object3D): void {
-  const rug = new THREE.Mesh(new THREE.BoxGeometry(5.2, 0.04, 3.7), material(0xd8d0bd));
-  rug.position.set(5.2, 0.03, 2.35);
-  rug.receiveShadow = true;
-  parent.add(rug);
-  const table = new THREE.Mesh(new THREE.BoxGeometry(3.2, 0.18, 1.6), material(0x75482f));
-  table.position.set(5.2, 0.82, 2.35);
-  table.castShadow = true;
-  parent.add(table);
-  for (const x of [4.0, 6.4]) {
-    box([0.12, 0.8, 0.12], 0x3f2922, [x, 0.4, 1.9], parent);
-    box([0.12, 0.8, 0.12], 0x3f2922, [x, 0.4, 2.8], parent);
+  const room = new THREE.Group();
+  room.position.set(5.3, 0, -2.0);
+  parent.add(room);
+
+  box([5.2, 0.08, 3.6], 0x172236, [0, 0, 0], room);
+  box([4.8, 0.035, 3.2], 0xddd7c8, [0, 0.06, 0], room);
+
+  const glass = (size: [number, number, number], position: [number, number, number]): THREE.Mesh => {
+    const pane = box(size, 0x5c7899, position, room);
+    pane.material.transparent = true;
+    pane.material.opacity = 0.24;
+    pane.material.roughness = 0.2;
+    pane.material.metalness = 0.25;
+    return pane;
+  };
+
+  glass([5.2, 2.7, 0.08], [0, 1.4, -1.78]);
+  glass([0.08, 2.7, 3.6], [-2.56, 1.4, 0]);
+  glass([0.08, 2.7, 3.6], [2.56, 1.4, 0]);
+  glass([1.2, 2.7, 0.08], [-2.0, 1.4, 1.78]);
+  glass([1.2, 2.7, 0.08], [2.0, 1.4, 1.78]);
+
+  for (const [x, z, size] of [
+    [0, -1.78, [5.3, 0.12, 0.12]],
+    [-2.56, 0, [0.12, 2.8, 0.12]],
+    [2.56, 0, [0.12, 2.8, 0.12]],
+    [-2.0, 1.78, [1.25, 0.12, 0.12]],
+    [2.0, 1.78, [1.25, 0.12, 0.12]],
+  ] as const) {
+    box(size as [number, number, number], 0x26364b, [x, 2.78, z], room);
   }
-  for (const [x, z] of [[5.2, 1.0], [5.2, 3.7], [3.35, 2.35], [7.05, 2.35]]) {
-    const chair = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.12, 0.62), material(0x26364b));
-    chair.position.set(x, 0.55, z);
-    chair.castShadow = true;
-    parent.add(chair);
+  box([0.12, 2.7, 0.12], 0x26364b, [-2.56, 1.4, -1.78], room);
+  box([0.12, 2.7, 0.12], 0x26364b, [2.56, 1.4, -1.78], room);
+
+  const table = box([3.25, 0.16, 1.3], 0x3d4658, [0, 0.85, -0.05], room);
+  table.material.roughness = 0.35;
+  for (const [x, z] of [[-1.2, -0.48], [1.2, -0.48], [-1.2, 0.38], [1.2, 0.38]]) {
+    box([0.12, 0.82, 0.12], 0x202938, [x, 0.42, z], room);
+  }
+
+  const chairPositions: Array<[number, number, number]> = [
+    [-1.1, -1.0, Math.PI],
+    [0, -1.0, Math.PI],
+    [1.1, -1.0, Math.PI],
+    [-1.1, 1.0, 0],
+    [0, 1.0, 0],
+    [1.1, 1.0, 0],
+  ];
+  for (const [x, z, rotation] of chairPositions) {
+    const chair = new THREE.Group();
+    chair.position.set(x, 0, z);
+    chair.rotation.y = rotation;
+    room.add(chair);
+    box([0.62, 0.12, 0.62], 0x26364b, [0, 0.55, 0], chair);
+    box([0.62, 0.58, 0.12], 0x1d2b40, [0, 0.82, 0.25], chair);
+    box([0.08, 0.45, 0.08], 0x3f4f68, [0, 0.28, 0], chair);
+  }
+
+  box([2.45, 1.35, 0.08], 0x172236, [0, 1.55, -1.7], room);
+  const screen = box([2.2, 1.1, 0.025], 0x0a2345, [0, 1.55, -1.65], room);
+  screen.material.emissive = new THREE.Color(0x0b3f76);
+  screen.material.emissiveIntensity = 1.2;
+  for (const [x, width, color] of [
+    [-0.72, 0.65, 0x38bdf8],
+    [-0.34, 0.9, 0x34d399],
+    [0.1, 0.55, 0xf59e0b],
+  ] as const) {
+    const bar = box([width, 0.08, 0.025], color, [x + width / 2, 1.55 - (x + 0.72) * 0.35, -1.62], room);
+    bar.material.emissive = new THREE.Color(color);
+    bar.material.emissiveIntensity = 0.8;
+  }
+
+  for (const x of [-1.4, 1.4]) {
+    const light = new THREE.PointLight(0xffdca8, 3.5, 4, 2);
+    light.position.set(x, 2.55, 0);
+    room.add(light);
+    box([0.5, 0.04, 0.2], 0xffdca8, [x, 2.72, 0], room);
   }
 }
 
@@ -516,14 +651,14 @@ export class ThreeOfficeScene {
   async init(container: HTMLElement): Promise<void> {
     this.container = container;
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color(0x0d1728);
-    this.scene.fog = new THREE.Fog(0x0d1728, 24, 36);
+    this.scene.background = new THREE.Color(0x789cbd);
+    this.scene.fog = new THREE.Fog(0x789cbd, 26, 44);
 
     const aspect = Math.max(container.clientWidth, 1) / Math.max(container.clientHeight, 1);
     this.camera = new THREE.OrthographicCamera(-10 * aspect, 10 * aspect, 10, -10, 0.1, 100);
     this.camera.position.set(15, 13, 15);
     this.camera.lookAt(0, 0, 0);
-    this.camera.zoom = 1.05;
+    this.camera.zoom = 0.9;
     this.camera.updateProjectionMatrix();
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
@@ -620,25 +755,27 @@ export class ThreeOfficeScene {
     const world = new THREE.Group();
     this.world = world;
     this.scene.add(world);
+    addCityBackdrop(world);
+    addClouds(world);
 
-    box([18.4, 0.3, 12.4], 0x182235, [0, -0.25, 0], world);
-    box([18, 0.08, 12], 0x9b6746, [0, -0.04, 0], world);
-    box([18, 3.8, 0.25], 0x6f7480, [0, 1.8, -6], world);
-    box([0.25, 3.8, 12], 0x6f7480, [-9, 1.8, 0], world);
-    box([18, 0.18, 0.35], 0x3c4350, [0, 3.65, -5.82], world);
-    addWindow(world, -5.8, 2.1, -5.84, 4.4);
-    addWindow(world, -0.2, 2.1, -5.84, 4.4);
-    addWindow(world, 5.4, 2.1, -5.84, 4.4);
+    box([22.4, 0.3, 15.4], 0x182235, [0, -0.25, 0], world);
+    box([22, 0.08, 15], 0x9b6746, [0, -0.04, 0], world);
+    box([22, 3.8, 0.25], 0x6f7480, [0, 1.8, -7.5], world);
+    box([0.25, 3.8, 15], 0x6f7480, [-11, 1.8, 0], world);
+    box([22, 0.18, 0.35], 0x3c4350, [0, 3.65, -7.32], world);
+    addWindow(world, -7.0, 2.1, -7.34, 4.8);
+    addWindow(world, 0, 2.1, -7.34, 4.8);
+    addWindow(world, 7.0, 2.1, -7.34, 4.8);
 
     for (const position of DESK_POSITIONS) addDesk(world, position);
     addMeetingArea(world);
     addIdleStations(world);
-    addPlant(world, -8.0, -4.9);
-    addPlant(world, -8.0, 4.4);
-    addPlant(world, 8.0, -4.9);
-    addPlant(world, 8.0, 5.0);
-    addLamp(world, -6.8, -4.8);
-    addLamp(world, 6.8, -4.8);
+    addPlant(world, -10.0, -6.3);
+    addPlant(world, -10.0, 6.1);
+    addPlant(world, 10.0, -6.3);
+    addPlant(world, 10.0, 6.4);
+    addLamp(world, -8.4, -6.3);
+    addLamp(world, 8.4, -6.3);
     this.addWallDisplay(world);
   }
 
@@ -842,7 +979,7 @@ export class ThreeOfficeScene {
     if (WORK_STATUSES.has(state.status) || state.status === "walking_to_desk") {
       return DESK_POSITIONS[Math.max(index, 0) % DESK_POSITIONS.length].clone().add(new THREE.Vector3(0, 0, 0.78));
     }
-    if (state.status === "collaboration") return new THREE.Vector3(5.2, 0, 2.35);
+    if (state.status === "collaboration") return new THREE.Vector3(5.3, 0, -2.0);
     return IDLE_POSITIONS[Math.max(index, 0) % IDLE_POSITIONS.length].clone();
   }
 

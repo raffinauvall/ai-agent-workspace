@@ -3,28 +3,173 @@
 
 use crate::discovery::agent_registry::AgentRegistry;
 use crate::models::{AgentState, AppConfig, AppStats, BugReport, OsInfo};
+use rand::{rngs::OsRng, RngCore};
+use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Arc;
-use std::time::Instant;
+use std::process::Stdio;
+use std::time::{Duration, Instant};
 use tauri::State;
 use tauri_plugin_dialog::DialogExt;
-use tokio::sync::RwLock;
+use tokio::io::{AsyncBufReadExt, AsyncRead, BufReader};
+use tokio::process::{Child, Command};
+use tokio::sync::{Mutex, RwLock};
+
+struct RemoteTunnel {
+    child: Child,
+    url: String,
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteAccessInfo {
+    pub running: bool,
+    pub url: Option<String>,
+    pub token: String,
+}
 
 /// Shared application state managed by Tauri.
 pub struct AppState {
     pub registry: Arc<RwLock<AgentRegistry>>,
     pub config: Arc<RwLock<AppConfig>>,
     pub start_time: Instant,
+    pub remote_token: String,
+    remote_tunnel: Arc<Mutex<Option<RemoteTunnel>>>,
+}
+
+fn forward_output<R>(output: R, tx: tokio::sync::mpsc::Sender<String>)
+where
+    R: AsyncRead + Unpin + Send + 'static,
+{
+    tauri::async_runtime::spawn(async move {
+        let mut lines = BufReader::new(output).lines();
+        while let Ok(Some(line)) = lines.next_line().await {
+            if tx.send(line).await.is_err() {
+                break;
+            }
+        }
+    });
 }
 
 impl AppState {
-    pub fn new(registry: Arc<RwLock<AgentRegistry>>, config: Arc<RwLock<AppConfig>>) -> Self {
+    pub fn new(
+        registry: Arc<RwLock<AgentRegistry>>,
+        config: Arc<RwLock<AppConfig>>,
+        remote_token: String,
+    ) -> Self {
         Self {
             registry,
             config,
             start_time: Instant::now(),
+            remote_token,
+            remote_tunnel: Arc::new(Mutex::new(None)),
         }
     }
+}
+
+#[tauri::command]
+pub async fn get_remote_access(state: State<'_, AppState>) -> Result<RemoteAccessInfo, String> {
+    let tunnel = state.remote_tunnel.lock().await;
+    Ok(RemoteAccessInfo {
+        running: tunnel.is_some(),
+        url: tunnel.as_ref().map(|tunnel| tunnel.url.clone()),
+        token: state.remote_token.clone(),
+    })
+}
+
+#[tauri::command]
+pub async fn start_remote_access(state: State<'_, AppState>) -> Result<RemoteAccessInfo, String> {
+    let mut tunnel = state.remote_tunnel.lock().await;
+    if let Some(current) = tunnel.as_ref() {
+        return Ok(RemoteAccessInfo {
+            running: true,
+            url: Some(current.url.clone()),
+            token: state.remote_token.clone(),
+        });
+    }
+
+    let port = state.config.read().await.extension_port.saturating_add(1);
+    let target = format!("http://127.0.0.1:{port}");
+    let mut child = Command::new("cloudflared")
+        .args(["tunnel", "--url", &target, "--no-autoupdate"])
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .map_err(|error| format!("cloudflared tidak bisa dijalankan: {error}"))?;
+
+    let stdout = child
+        .stdout
+        .take()
+        .ok_or_else(|| "cloudflared stdout tidak tersedia".to_string())?;
+    let stderr = child
+        .stderr
+        .take()
+        .ok_or_else(|| "cloudflared stderr tidak tersedia".to_string())?;
+    let (line_tx, mut line_rx) = tokio::sync::mpsc::channel::<String>(32);
+
+    forward_output(stdout, line_tx.clone());
+    forward_output(stderr, line_tx.clone());
+    drop(line_tx);
+
+    let url = tokio::time::timeout(Duration::from_secs(15), async {
+        while let Some(line) = line_rx.recv().await {
+            if let Some(url) = extract_tunnel_url(&line) {
+                return Some(url);
+            }
+        }
+        None
+    })
+    .await
+    .ok()
+    .flatten();
+
+    let Some(url) = url else {
+        let _ = child.kill().await;
+        return Err("Tunnel tidak mengeluarkan URL dalam 15 detik".to_string());
+    };
+
+    app_log!("REMOTE_API", "tunnel started at {url}");
+    *tunnel = Some(RemoteTunnel {
+        child,
+        url: url.clone(),
+    });
+    Ok(RemoteAccessInfo {
+        running: true,
+        url: Some(url),
+        token: state.remote_token.clone(),
+    })
+}
+
+#[tauri::command]
+pub async fn stop_remote_access(state: State<'_, AppState>) -> Result<(), String> {
+    let mut tunnel = state.remote_tunnel.lock().await;
+    if let Some(mut current) = tunnel.take() {
+        current
+            .child
+            .kill()
+            .await
+            .map_err(|error| format!("Tunnel gagal dihentikan: {error}"))?;
+        app_log!("REMOTE_API", "tunnel stopped");
+    }
+    Ok(())
+}
+
+fn extract_tunnel_url(line: &str) -> Option<String> {
+    line.split_whitespace()
+        .map(|part| {
+            part.trim_matches(|character: char| {
+                !character.is_ascii_alphanumeric() && !":/.-_".contains(character)
+            })
+        })
+        .find(|part| part.starts_with("https://") && part.contains("trycloudflare.com"))
+        .map(ToOwned::to_owned)
+}
+
+pub fn generate_remote_token() -> String {
+    let mut bytes = [0u8; 24];
+    OsRng.fill_bytes(&mut bytes);
+    bytes.iter().map(|byte| format!("{byte:02x}")).collect()
 }
 
 /// Return all currently registered agents.

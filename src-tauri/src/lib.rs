@@ -22,7 +22,8 @@ use interceptor::parser_registry::ParserRegistry;
 use interceptor::parser_trait::AgentLogParser;
 use interceptor::state_classifier::{StateClassifier, TransitionResult};
 use ipc::commands::{
-    generate_bug_report, get_agent, get_all_agents, get_config, get_stats, set_config, AppState,
+    generate_bug_report, generate_remote_token, get_agent, get_all_agents, get_config,
+    get_remote_access, get_stats, set_config, start_remote_access, stop_remote_access, AppState,
 };
 use models::AppConfig;
 use std::sync::Arc;
@@ -51,7 +52,13 @@ pub fn run() {
     // Initialize the shared agent registry
     let registry = new_shared_registry();
 
-    let app_state = AppState::new(Arc::clone(&registry), Arc::clone(&config));
+    let app_state = AppState::new(
+        Arc::clone(&registry),
+        Arc::clone(&config),
+        generate_remote_token(),
+    );
+    let remote_token = app_state.remote_token.clone();
+    let remote_start_time = app_state.start_time;
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -63,6 +70,9 @@ pub fn run() {
             get_config,
             set_config,
             get_stats,
+            get_remote_access,
+            start_remote_access,
+            stop_remote_access,
             generate_bug_report,
         ])
         .setup(move |app| {
@@ -430,6 +440,22 @@ pub fn run() {
                     registry_for_ext,
                     config_for_ext,
                     handle_for_ext,
+                )
+                .await;
+            });
+
+            // Separate read-only server for the optional public tunnel.
+            let remote_port = config
+                .try_read()
+                .map(|cfg| cfg.extension_port.saturating_add(1))
+                .unwrap_or(7843);
+            let remote_registry = Arc::clone(&registry);
+            tauri::async_runtime::spawn(async move {
+                ipc::remote_api::run_remote_server(
+                    remote_port,
+                    remote_registry,
+                    remote_token,
+                    remote_start_time,
                 )
                 .await;
             });

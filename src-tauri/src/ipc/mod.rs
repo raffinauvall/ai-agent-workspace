@@ -4,3 +4,4 @@
 pub mod commands;
 pub mod events;
 pub mod extension_server;
+pub mod remote_api;

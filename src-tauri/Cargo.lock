@@ -2165,6 +2165,7 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "dirs",
+ "rand 0.8.5",
  "regex",
  "serde",
  "serde_json",

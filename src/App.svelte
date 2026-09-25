@@ -5,6 +5,7 @@
   import { selectAgent } from "$lib/stores/office.svelte";
   import { ThreeOfficeScene } from "$lib/renderer";
   import { initSoundBridge, destroySoundBridge } from "$lib/sound";
+  import { TAURI_COMMANDS, type RemoteAccessInfo } from "$lib/types/index";
   import AgentSidebar from "$lib/ui/AgentSidebar.svelte";
   import StatusBar from "$lib/ui/StatusBar.svelte";
   import AgentMetrics from "$lib/ui/AgentMetrics.svelte";
@@ -14,6 +15,10 @@
 
   // Settings panel visibility
   let settingsOpen = $state(false);
+  let remoteOpen = $state(false);
+  let remoteBusy = $state(false);
+  let remoteError = $state("");
+  let remote = $state<RemoteAccessInfo | null>(null);
 
   // Three.js scene instance
   let scene: ThreeOfficeScene | null = null;
@@ -33,12 +38,49 @@
     selectAgent(customEvent.detail.id);
   }
 
+  async function refreshRemote(): Promise<void> {
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      remote = await invoke<RemoteAccessInfo>(TAURI_COMMANDS.GET_REMOTE_ACCESS);
+    } catch {
+      remote = null;
+    }
+  }
+
+  async function toggleRemote(): Promise<void> {
+    if (remoteBusy) return;
+    remoteBusy = true;
+    remoteError = "";
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      if (remote?.running) {
+        await invoke(TAURI_COMMANDS.STOP_REMOTE_ACCESS);
+      } else {
+        remote = await invoke<RemoteAccessInfo>(TAURI_COMMANDS.START_REMOTE_ACCESS);
+      }
+      await refreshRemote();
+    } catch (err) {
+      remoteError = err instanceof Error ? err.message : String(err);
+    } finally {
+      remoteBusy = false;
+    }
+  }
+
+  async function copyRemote(value: string): Promise<void> {
+    try {
+      await navigator.clipboard.writeText(value);
+    } catch {
+      remoteError = "Clipboard tidak tersedia; salin nilai ini manual.";
+    }
+  }
+
   onMount(() => {
     let disposed = false;
 
     // Initialize stores first, then renderer (renderer reads store for mock data fallback)
     void initSettingsStore();
     void initSoundBridge();
+    void refreshRemote();
 
     const startup = async () => {
       await initAgentsStore();
@@ -111,6 +153,43 @@
     {t("app.settings")}
   </button>
 
+  <button
+    class="remote-trigger btn"
+    aria-expanded={remoteOpen}
+    onclick={() => (remoteOpen = !remoteOpen)}
+  >
+    <span class:live-dot={remote?.running} class="remote-dot" aria-hidden="true"></span>
+    {remote?.running ? "Remote aktif" : "Remote"}
+  </button>
+
+  {#if remoteOpen}
+    <section class="remote-card" aria-label="Remote access">
+      <div class="remote-heading">
+        <div>
+          <strong>Remote access</strong>
+          <span>{remote?.running ? "Tunnel Cloudflare aktif" : "Belum terhubung"}</span>
+        </div>
+        <button class="icon-button" aria-label="Tutup remote access" onclick={() => (remoteOpen = false)}>×</button>
+      </div>
+      {#if remote?.running && remote.url}
+        <label>
+          URL Flutter
+          <button class="copy-field" onclick={() => copyRemote(remote?.url ?? "")}>{remote.url}</button>
+        </label>
+        <label>
+          Token
+          <button class="copy-field token" onclick={() => copyRemote(remote?.token ?? "")}>{remote.token}</button>
+        </label>
+      {:else}
+        <p>Share URL dan token ini hanya ke device yang lo percaya.</p>
+      {/if}
+      {#if remoteError}<p class="remote-error">{remoteError}</p>{/if}
+      <button class="remote-action" disabled={remoteBusy} onclick={toggleRemote}>
+        {remoteBusy ? "Menyiapkan…" : remote?.running ? "Tutup tunnel" : "Buka tunnel"}
+      </button>
+    </section>
+  {/if}
+
 </div>
 
 <!-- Agent sidebar (slide-in from right) -->
@@ -167,5 +246,124 @@
     z-index: var(--z-hud);
     pointer-events: all;
     font-size: 12px;
+  }
+
+  .remote-trigger {
+    position: fixed;
+    top: 58px;
+    left: 16px;
+    z-index: var(--z-hud);
+    pointer-events: all;
+    font-size: 12px;
+  }
+
+  .remote-dot {
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+    background: #77768a;
+  }
+
+  .remote-dot.live-dot {
+    background: #60d394;
+  }
+
+  .remote-card {
+    position: fixed;
+    top: 98px;
+    left: 16px;
+    z-index: var(--z-modal);
+    width: min(360px, calc(100vw - 32px));
+    padding: 14px;
+    border: 1px solid #4a4863;
+    border-radius: 10px;
+    background: #141422;
+    box-shadow: 0 12px 28px rgb(0 0 0 / 28%);
+    color: #eeeef4;
+  }
+
+  .remote-heading {
+    display: flex;
+    align-items: start;
+    justify-content: space-between;
+    gap: 12px;
+  }
+
+  .remote-heading div {
+    display: grid;
+    gap: 3px;
+  }
+
+  .remote-heading span,
+  .remote-card p {
+    margin: 0;
+    color: #b8b6c6;
+    font-size: 12px;
+    line-height: 1.45;
+  }
+
+  .icon-button,
+  .copy-field,
+  .remote-action {
+    min-height: 44px;
+    border: 0;
+    font: inherit;
+    cursor: pointer;
+  }
+
+  .icon-button {
+    width: 44px;
+    border-radius: 6px;
+    background: transparent;
+    color: #d6d4e0;
+    font-size: 22px;
+  }
+
+  .remote-card label {
+    display: grid;
+    gap: 4px;
+    margin-top: 12px;
+    color: #aaa8bb;
+    font-size: 11px;
+  }
+
+  .copy-field {
+    overflow: hidden;
+    padding: 8px 10px;
+    border-radius: 6px;
+    background: #0d0d18;
+    color: #f2f1f7;
+    text-align: left;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .copy-field.token {
+    font-family: ui-monospace, SFMono-Regular, Consolas, monospace;
+    font-size: 11px;
+  }
+
+  .remote-action {
+    width: 100%;
+    margin-top: 14px;
+    border-radius: 6px;
+    background: #e9b949;
+    color: #17120a;
+    font-weight: 700;
+  }
+
+  .remote-action:disabled {
+    cursor: wait;
+    opacity: 0.65;
+  }
+
+  .remote-error {
+    margin-top: 10px !important;
+    color: #ff9b9b !important;
+  }
+
+  :global(button:focus-visible) {
+    outline: 2px solid #e9b949;
+    outline-offset: 2px;
   }
 </style>
