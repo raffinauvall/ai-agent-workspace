@@ -57,7 +57,7 @@ impl AgentLogParser for ClaudeCodeParser {
     }
 
     /// Claude: `~/.claude/projects/<project-dir>/<session-uuid>.jsonl`
-    /// → `log-<project-dir>--<first 8 chars of uuid>`
+    /// → `log-<project-dir>--<full session uuid>`
     fn path_to_agent_id(&self, path: &Path) -> String {
         let parent = path
             .parent()
@@ -66,14 +66,7 @@ impl AgentLogParser for ClaudeCodeParser {
             .unwrap_or_else(|| "unknown".to_string());
         let stem = path
             .file_stem()
-            .map(|s| {
-                let s = s.to_string_lossy();
-                if s.len() > 8 {
-                    s[..8].to_string()
-                } else {
-                    s.to_string()
-                }
-            })
+            .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_default();
         if stem.is_empty() {
             format!("log-{parent}")
@@ -897,7 +890,7 @@ mod tests {
         );
         assert_eq!(
             parser.path_to_agent_id(path),
-            "log--Users-me-myproject--8fea29d9"
+            "log--Users-me-myproject--8fea29d9-1234-5678-abcd-ef0123456789"
         );
     }
 

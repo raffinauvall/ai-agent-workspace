@@ -4,6 +4,7 @@ import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js
 import type { GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { GenZAvatar, loadAvatar, avatarStyle, type AvatarStyle, type AvatarPose } from "./GenZAvatar";
 import { OfficeNavigation } from "./OfficeNavigation";
+import { createCafeRacer } from "./CafeRacer";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type { AgentState, Status } from "$lib/types/agent";
@@ -587,66 +588,9 @@ function addSmokingCorner(parent: THREE.Object3D, x: number, z: number): void {
 }
 
 function addCafeRacer(parent: THREE.Object3D, x: number, z: number): void {
-  const group = new THREE.Group();
+  const group = createCafeRacer();
   group.position.set(x, 0, z);
   parent.add(group);
-  const blue = new THREE.MeshStandardMaterial({ color: 0x1677c8, roughness: 0.28, metalness: 0.45 });
-  const dark = material(0x111827, 0.35);
-  const chrome = new THREE.MeshStandardMaterial({ color: 0xcbd5e1, roughness: 0.2, metalness: 0.85 });
-  for (const wheelX of [-0.72, 0.72]) {
-    const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.34, 0.34, 0.12, 12), dark);
-    wheel.rotation.x = Math.PI / 2;
-    wheel.position.set(wheelX, 0.36, 0);
-    wheel.castShadow = true;
-    group.add(wheel);
-    const hub = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.14, 10), chrome);
-    hub.rotation.x = Math.PI / 2;
-    hub.position.set(wheelX, 0.36, 0);
-    group.add(hub);
-  }
-  box([1.5, 0.08, 0.08], 0x334155, [0, 0.58, 0], group);
-  const tank = new THREE.Mesh(new THREE.SphereGeometry(0.34, 10, 6), blue);
-  tank.scale.set(1.25, 0.58, 0.85);
-  tank.position.set(-0.05, 0.78, 0);
-  tank.castShadow = true;
-  group.add(tank);
-  for (let ribX = -0.52; ribX <= 0.12; ribX += 0.13) {
-    box([0.035, 0.035, 0.34], 0x334155, [ribX, 0.88, 0], group);
-  }
-  const badgeCanvas = document.createElement("canvas");
-  badgeCanvas.width = 320;
-  badgeCanvas.height = 96;
-  const badgeContext = badgeCanvas.getContext("2d");
-  if (badgeContext !== null) {
-    badgeContext.strokeStyle = "#e5e7eb";
-    badgeContext.lineWidth = 7;
-    badgeContext.beginPath();
-    badgeContext.moveTo(18, 25);
-    badgeContext.lineTo(300, 25);
-    badgeContext.moveTo(18, 34);
-    badgeContext.lineTo(300, 34);
-    badgeContext.stroke();
-    badgeContext.fillStyle = "#f8fafc";
-    badgeContext.font = "bold 34px sans-serif";
-    badgeContext.fillText("ペット", 112, 78);
-  }
-  const badge = new THREE.Mesh(
-    new THREE.PlaneGeometry(0.7, 0.21),
-    new THREE.MeshBasicMaterial({ map: new THREE.CanvasTexture(badgeCanvas), transparent: true, side: THREE.DoubleSide }),
-  );
-  badge.position.set(-0.05, 0.79, 0.3);
-  group.add(badge);
-  box([0.48, 0.12, 0.34], 0x0f172a, [-0.45, 0.78, 0], group);
-  box([0.38, 0.1, 0.12], 0xdbeafe, [0.7, 0.86, 0], group);
-  const handlebar = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.62, 6), chrome);
-  handlebar.rotation.z = Math.PI / 2;
-  handlebar.position.set(0.7, 1.03, 0);
-  group.add(handlebar);
-  box([0.12, 0.4, 0.12], 0x475569, [0.72, 0.7, 0], group);
-  const exhaust = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.75, 8), chrome);
-  exhaust.rotation.z = Math.PI / 2;
-  exhaust.position.set(-0.2, 0.38, 0.28);
-  group.add(exhaust);
 }
 
 function addGarage(parent: THREE.Object3D): void {

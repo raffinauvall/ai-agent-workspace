@@ -4,7 +4,7 @@
 use crate::discovery::agent_registry::AgentRegistry;
 use crate::activity::SharedActivityStore;
 use crate::managed_sessions::SharedManagedSessions;
-use crate::managed_sessions::{control_capability, dispatch_prompt, ControlCapability, Provider, WorkspaceInfo};
+use crate::managed_sessions::{control_capability, dispatch_prompt, find_executable, ControlCapability, Provider, WorkspaceInfo};
 use crate::activity::ActivityEvent;
 use crate::models::{AgentState, AppConfig, AppStats, BugReport, OsInfo};
 use rand::{rngs::OsRng, RngCore};
@@ -291,8 +291,8 @@ pub struct RemoteCapabilities {
 #[tauri::command]
 pub async fn get_remote_capabilities(state: State<'_, AppState>) -> Result<RemoteCapabilities, String> {
     let workspaces = state.managed_sessions.lock().map(|sessions| sessions.workspaces()).map_err(|_| "Session manager terkunci".to_string())?;
-    let providers: Vec<String> = ["codex", "claude", "gemini"].into_iter().filter(|name| std::env::var_os("PATH").map(|path| path.to_string_lossy().split(':').map(|dir| PathBuf::from(dir).join(name)).any(|path| path.is_file())).unwrap_or(false)).map(str::to_string).collect();
-    Ok(RemoteCapabilities { remote_control_enabled: state.remote_control_enabled.load(Ordering::Relaxed), terminal_controller: providers.iter().any(|_| true) && std::env::var_os("PATH").map(|path| path.to_string_lossy().split(':').map(|dir| PathBuf::from(dir).join("kitty")).any(|path| path.is_file())).unwrap_or(false), providers, workspaces })
+    let providers: Vec<String> = ["codex", "claude", "gemini"].into_iter().filter(|name| find_executable(name).is_some()).map(str::to_string).collect();
+    Ok(RemoteCapabilities { remote_control_enabled: state.remote_control_enabled.load(Ordering::Relaxed), terminal_controller: find_executable("kitty").is_some(), providers, workspaces })
 }
 
 #[tauri::command]

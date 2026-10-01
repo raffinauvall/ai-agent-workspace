@@ -51,7 +51,7 @@ Library sistem tetap diperlukan; package manager akan memasang dependency yang t
 Gunakan paket Arch, **bukan** `.deb`:
 
 ```bash
-sudo pacman -U ./officeai-0.1.0-2-x86_64.pkg.tar.zst
+sudo pacman -U ./officeai-0.1.0-6-x86_64.pkg.tar.zst
 officeai
 ```
 
@@ -68,15 +68,18 @@ sudo pacman -S --needed base-devel nodejs npm rust webkit2gtk-4.1 gtk3
 git clone https://github.com/raffinauvall/ai-agent-workspace.git
 cd ai-agent-workspace
 npm ci
-CARGO_BUILD_JOBS=2 npm run tauri -- build --no-bundle
+CARGO_BUILD_JOBS=2 npm run build:desktop
 cd packaging/arch
 makepkg --force
-sudo pacman -U ./officeai-0.1.0-2-x86_64.pkg.tar.zst
+sudo pacman -U ./officeai-0.1.0-6-x86_64.pkg.tar.zst
 ```
 
 Node.js 22+ dan Rust diperlukan hanya untuk build. Jika memakai rustup, aktifkan
 environment Cargo sebelum build: `source "$HOME/.cargo/env"`.
 `CARGO_BUILD_JOBS=2` membatasi paralelisme compile pada laptop, bukan penggunaan CPU aplikasi.
+Jangan memakai `cargo build --release` tanpa `--features custom-protocol`:
+profil release saja masih memakai URL Vite. `npm run build:desktop` menyertakan
+frontend ke binary, sehingga app terpasang tidak membutuhkan server dev.
 
 ### Ubuntu / Debian
 
@@ -154,10 +157,24 @@ tmux new-session -s ai-workspace
 OfficeAI memakai socket tmux dan ID pane, bukan pane yang kebetulan sedang aktif.
 Keluar dari copy-mode dan pastikan agent berada di foreground sebelum mengirim.
 
-Kitty/tmux dan CLI provider harus tersedia di PATH aplikasi desktop.
+Kitty/tmux harus terpasang di laptop. OfficeAI mencari CLI provider di PATH,
+`~/.local/bin`, `~/.npm-global/bin`, dan folder versi Node di NVM
+(`NVM_DIR` atau `~/.nvm`). Jadi CLI yang di-install lewat NVM tetap terdeteksi
+ketika OfficeAI dibuka dari launcher, tanpa menjalankan profil shell.
 Agent yang dibuat melalui tombol **New agent** menggunakan Kitty dan workspace
-allowlist desktop; konfigurasi `remote_workspaces` ada di
+allowlist desktop; konfigurasi `remoteWorkspaces` ada di
 `~/.config/office-ai/config.toml`.
+Di HP, tekan **+**, pilih provider dan workspace, lalu **Open terminal**.
+Terminal dibuka di laptop; agent muncul setelah CLI mulai berjalan. Jika gagal,
+dialog mempertahankan prompt dan menampilkan alasan agar bisa dicoba lagi.
+
+Setelah mengirim, agent tujuan menampilkan **menunggu respons**, kemudian
+aktivitas berpikir, tool yang dijalankan, dan balasan di timeline agent yang sama.
+OfficeAI mencocokkan echo prompt lengkap dengan sesi tujuan dan menyimpan ID
+sesi Codex lengkap; dua agent dalam project yang sama tidak dipilih berdasarkan
+urutan PID. Prompt identik yang bersamaan dan belum memiliki binding tetap
+dianggap ambigu. Jika log tidak muncul, UI meminta memeriksa terminal; receipt
+pengiriman bukan jaminan provider sudah memproses prompt.
 
 ## Android
 

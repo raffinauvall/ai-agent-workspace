@@ -1,6 +1,12 @@
 // OfficeAI — Tauri v2 backend entry point
 // Initializes all modules and wires them into the Tauri builder
 
+// A release profile alone does not enable Tauri's embedded frontend.
+const _: () = assert!(
+    cfg!(debug_assertions) || !tauri::is_dev(),
+    "Release must embed the frontend. Use npm run build:desktop or cargo build --release --features custom-protocol"
+);
+
 #[macro_use]
 mod logger;
 mod discovery;
@@ -221,7 +227,7 @@ pub fn run() {
                                 agent.managed_session_id = Some(session.session_id);
                             }
                             if let Some((session, message)) = sessions_for_scanner.lock().ok().and_then(|mut sessions| sessions.take_queued_for_agent(&agent.id)) {
-                                tauri::async_runtime::spawn(deliver_queued(session, message, sessions_for_scanner.clone(), activities_for_scanner.clone()));
+                                tauri::async_runtime::spawn(deliver_queued(session, message, sessions_for_scanner.clone(), activities_for_scanner.clone(), registry_for_scanner.clone()));
                             }
                             if let Some(cwd_path) = cwd {
                                 cwd_map_for_scanner.write().await.insert(agent.id.clone(), cwd_path.clone());
@@ -278,7 +284,10 @@ pub fn run() {
                         let agent_id = {
                             let reg = registry_for_logs.read().await;
                             let cwd_map = cwd_map_for_logs.read().await;
-                            resolve_agent_id(&log_id, &mut log_to_registry, &reg, event.cwd.as_deref(), &cwd_map, model_hint.as_deref())
+                            let bound = sessions_for_logs.lock().ok().and_then(|mut sessions|
+                                sessions.agent_for_log(&log_id, &raw.line, model_hint.as_deref(), event.cwd.as_deref()));
+                            bound.filter(|id| reg.get(id).is_some()).unwrap_or_else(||
+                                resolve_agent_id(&log_id, &mut log_to_registry, &reg, event.cwd.as_deref(), &cwd_map, model_hint.as_deref()))
                         };
 
                         app_log!("LOG_PARSE", "status={:?} model={:?} log_id={} → agent_id={}", event.status, event.model, log_id, agent_id);
@@ -342,9 +351,18 @@ pub fn run() {
                         if is_updated || is_debounced || has_tokens || has_sub_agents || has_completed_subs {
                             let mut reg = registry_for_logs.write().await;
                             if let Some(mut agent) = reg.get(&agent_id) {
-                                let activity_title = event.activity.as_ref().map(|activity| activity.title.clone());
-                                if is_updated {
-                                    agent.status = event.status;
+                                let activity_title = event.activity.as_ref().map(|activity| {
+                                    if activity.kind == activity::ActivityKind::ToolStart {
+                                        if let Some(detail) = &activity.detail {
+                                            return activity::sanitize(&format!("{} · {}", activity.title, detail));
+                                        }
+                                    }
+                                    activity.title.clone()
+                                });
+                                let heartbeat = event.activity.as_ref().is_some_and(|activity|
+                                    activity.kind == activity::ActivityKind::Reasoning && activity.title == "Working");
+                                if is_updated || is_debounced {
+                                    if is_updated { agent.status = event.status; }
                                     if let Some(model) = event.model {
                                         let new_tier = models::Tier::from_model(&model);
                                         app_log!("TIER", "agent {} model='{}' → tier {:?} (was {:?})", agent_id, model, new_tier, agent.tier);
@@ -354,8 +372,10 @@ pub fn run() {
                                     if event.current_task.is_some() {
                                         agent.current_task = event.current_task;
                                     }
-                                    agent.current_activity = activity_title.or_else(|| Some(format!("{:?}", agent.status)));
-                                    if matches!(agent.status, models::Status::Thinking) && agent.current_task.is_some() {
+                                    if !heartbeat {
+                                        agent.current_activity = activity_title.or_else(|| Some(format!("{:?}", agent.status)));
+                                    }
+                                    if event.activity.as_ref().is_some_and(|activity| activity.kind == activity::ActivityKind::Prompt) && agent.current_task.is_some() {
                                         agent.current_goal = agent.current_task.clone();
                                     }
                                 }
@@ -388,14 +408,14 @@ pub fn run() {
                                 let current_status = agent.status.clone();
                                 reg.update(&agent_id, agent, &handle_for_logs);
 
-                                if let Some(activity) = event.activity {
+                                if let Some(activity) = event.activity.filter(|_| !heartbeat) {
                                     if let Ok(mut store) = activities_for_logs.lock() {
                                         store.append(&agent_id, &event.timestamp, current_status.clone(), activity);
                                     }
                                 }
                                 if current_status == models::Status::TaskComplete {
                                     if let Some((session, message)) = sessions_for_logs.lock().ok().and_then(|mut sessions| sessions.take_queued_for_agent(&agent_id)) {
-                                        tauri::async_runtime::spawn(deliver_queued(session,message,sessions_for_logs.clone(),activities_for_logs.clone()));
+                                        tauri::async_runtime::spawn(deliver_queued(session,message,sessions_for_logs.clone(),activities_for_logs.clone(),registry_for_logs.clone()));
                                     }
                                 }
 
@@ -562,20 +582,8 @@ fn load_config_or_default() -> AppConfig {
     config
 }
 
-/// Resolve a log-derived agent ID to the actual registry ID.
-///
-/// The process scanner registers agents as `pid-{PID}`, while the log watcher
-/// derives IDs as `log-{project}`. This function bridges the gap by mapping
-/// log IDs to scanner-registered agents so that log events update the correct
-/// agent sprite instead of creating a new one.
-///
-/// Matching is done by comparing the JSONL `cwd` field with each agent's cwd
-/// (recorded by the scanner). This prevents logs from one agent accidentally
-/// updating a different agent's state.
-///
-/// Each mapping entry includes a `last_seen` timestamp. Mappings older than
-/// `MAPPING_STALE_SECS` are excluded from the `already_mapped` set, allowing
-/// new sessions to claim the same pid-* agent after the old session expires.
+/// Explicit terminal/prompt bindings are checked before this fallback.
+/// A shared workspace is not an identity: ambiguous candidates stay unassigned.
 fn resolve_agent_id(
     log_id: &str,
     mapping: &mut std::collections::HashMap<String, (String, std::time::Instant)>,
@@ -584,178 +592,47 @@ fn resolve_agent_id(
     agent_cwd_map: &std::collections::HashMap<String, String>,
     model_hint: Option<&str>,
 ) -> String {
-    const MAPPING_STALE_SECS: u64 = 30;
-
-    // 1. Direct match — agent registered under log ID
-    if registry.get(log_id).is_some() {
-        app_log!("LOG_MATCH", "{} → direct match", log_id);
-        return log_id.to_string();
-    }
-
-    // 2. Check existing mapping (cached from previous resolution)
-    if let Some((mapped_id, _)) = mapping.get(log_id).cloned() {
-        if registry.get(&mapped_id).is_some() {
-            mapping.get_mut(log_id).unwrap().1 = std::time::Instant::now();
-            app_log!("LOG_MATCH", "{} → cached mapping → {}", log_id, mapped_id);
-            return mapped_id;
-        }
-        // Stale mapping — agent was removed from registry
-        app_log!(
-            "LOG_MATCH",
-            "{} → stale mapping to {} (agent gone), clearing",
-            log_id,
-            mapped_id
-        );
-        mapping.remove(log_id);
-    }
-
-    // 3. Match by cwd — find a pid-* agent whose cwd matches the JSONL cwd
-    if let Some(cwd) = log_cwd {
-        let now = std::time::Instant::now();
-        let already_mapped: std::collections::HashSet<&String> = mapping
-            .iter()
-            .filter(|(_, (_, last_seen))| {
-                now.duration_since(*last_seen).as_secs() < MAPPING_STALE_SECS
-            })
-            .map(|(_, (pid, _))| pid)
-            .collect();
-
-        // Build ever_mapped: ALL agents that have ANY mapping entry (even stale).
-        // Used to prefer never-mapped agents when multiple candidates share the same CWD.
-        let ever_mapped: std::collections::HashSet<&String> =
-            mapping.iter().map(|(_, (pid, _))| pid).collect();
-
-        // Collect all CWD-matching candidates (excluding actively mapped)
-        let mut candidates: Vec<String> = Vec::new();
-        for agent in registry.get_all() {
-            if !agent.id.starts_with("pid-") || already_mapped.contains(&agent.id) {
-                continue;
-            }
-            if let Some(agent_cwd) = agent_cwd_map.get(&agent.id) {
-                // Compare with prefix: JSONL cwd may be a subdirectory of the process cwd
-                // or vice versa (e.g. scanner sees /project, JSONL has /project/subdir)
-                if cwd.starts_with(agent_cwd.as_str()) || agent_cwd.starts_with(cwd) {
-                    candidates.push(agent.id.clone());
-                }
-            }
-        }
-
-        // Filter candidates by model affinity when model_hint is available.
-        // This prevents a Claude log from matching a Gemini process (and vice versa)
-        // when the only CWD-matching candidate has a different model.
+    if registry.get(log_id).is_some() { return log_id.into(); }
+    mapping.retain(|_, (id, _)| registry.get(id).is_some());
+    let agents = registry.get_all();
+    let candidates: Vec<_> = agents.iter().filter(|agent| {
+        if !agent.id.starts_with("pid-") { return false; }
         if let Some(hint) = model_hint {
-            let model_filtered: Vec<String> = candidates
-                .iter()
-                .filter(|id| {
-                    registry
-                        .get(id)
-                        .map(|agent| agent.model.to_lowercase().contains(hint))
-                        .unwrap_or(false)
-                })
-                .cloned()
-                .collect();
-            if !model_filtered.is_empty() {
-                candidates = model_filtered;
-            } else {
-                // No model-matching candidates — clear all to fall through
-                candidates.clear();
+            let provider = agent.name.to_lowercase();
+            if !agent.model.to_lowercase().contains(hint) && !agent.model.is_empty()
+                && provider != hint && !provider.starts_with(&format!("{hint}-")) { return false; }
+        }
+        match (log_cwd, agent_cwd_map.get(&agent.id)) {
+            (Some(log), Some(agent)) => {
+                std::path::Path::new(log).starts_with(agent) || std::path::Path::new(agent).starts_with(log)
             }
+            (Some(_), None) | (None, _) => model_hint.is_some(),
         }
-
-        // Sort remaining candidates by preference:
-        // 1. Never-mapped agents preferred over previously-mapped (0 vs 1)
-        // 2. Deterministic PID tiebreaker (lowest PID wins among equal candidates)
-        candidates.sort_by_key(|id| {
-            let mapped = if ever_mapped.contains(id) { 1u8 } else { 0u8 };
-            let pid_num: u64 = id
-                .strip_prefix("pid-")
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(u64::MAX);
-            (mapped, pid_num)
-        });
-
-        if let Some(best_id) = candidates.first() {
-            app_log!(
-                "LOG_MATCH",
-                "{} → cwd match → {} (cwd={}, candidates={})",
-                log_id,
-                best_id,
-                cwd,
-                candidates.len()
-            );
-            mapping.insert(log_id.to_string(), (best_id.clone(), now));
-            return best_id.clone();
-        }
+    }).collect();
+    if let [agent] = candidates.as_slice() {
+        mapping.insert(log_id.into(), (agent.id.clone(), std::time::Instant::now()));
+        return agent.id.clone();
     }
-
-    // 4. Model-hint fallback — match by model_hint among unmapped pid-* agents
-    //    that have no CWD (sysinfo couldn't read it) or when log_cwd is unavailable
-    //    (e.g. Gemini CLI logs). This covers the case where the scanner found a
-    //    process but couldn't determine its working directory.
-    if let Some(hint) = model_hint {
-        let now = std::time::Instant::now();
-        let already_mapped: std::collections::HashSet<&String> = mapping
-            .iter()
-            .filter(|(_, (_, last_seen))| {
-                now.duration_since(*last_seen).as_secs() < MAPPING_STALE_SECS
-            })
-            .map(|(_, (pid, _))| pid)
-            .collect();
-
-        let ever_mapped: std::collections::HashSet<&String> =
-            mapping.iter().map(|(_, (pid, _))| pid).collect();
-
-        let mut candidates: Vec<String> = Vec::new();
-        for agent in registry.get_all() {
-            if !agent.id.starts_with("pid-") || already_mapped.contains(&agent.id) {
-                continue;
-            }
-            // Only consider agents without CWD (couldn't be matched in step 3)
-            // or all agents when log_cwd is unavailable
-            let agent_has_cwd = agent_cwd_map.contains_key(&agent.id);
-            if log_cwd.is_some() && agent_has_cwd {
-                continue;
-            }
-            if agent.model.to_lowercase().contains(hint) || agent.model.is_empty() {
-                candidates.push(agent.id.clone());
-            }
-        }
-
-        candidates.sort_by_key(|id| {
-            let mapped = if ever_mapped.contains(id) { 1u8 } else { 0u8 };
-            let pid_num: u64 = id
-                .strip_prefix("pid-")
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(u64::MAX);
-            (mapped, pid_num)
-        });
-
-        if let Some(best_id) = candidates.first() {
-            app_log!(
-                "LOG_MATCH",
-                "{} → model-hint fallback → {} (hint={}, candidates={})",
-                log_id,
-                best_id,
-                hint,
-                candidates.len()
-            );
-            mapping.insert(log_id.to_string(), (best_id.clone(), now));
-            return best_id.clone();
-        }
+    // A cached guess must not survive the arrival of another matching process.
+    if log_cwd.is_none() && model_hint.is_none() && agents.len() == 1 {
+        if let Some((id, _)) = mapping.get(log_id) { return id.clone(); }
     }
-
-    // No match found — return log ID as-is (will be ignored by registry lookup)
-    app_log!(
-        "LOG_MATCH",
-        "{} → no match found (cwd={:?})",
-        log_id,
-        log_cwd
-    );
-    log_id.to_string()
+    mapping.remove(log_id);
+    app_log!("LOG_MATCH", "{} → unassigned (matching processes={})", log_id, candidates.len());
+    log_id.into()
 }
 
 #[cfg(test)]
 mod tests {
+    #[cfg(feature = "custom-protocol")]
+    #[test]
+    fn production_frontend_is_embedded_without_a_dev_server() {
+        assert!(!tauri::is_dev());
+        let context: tauri::Context<tauri::Wry> = tauri::generate_context!();
+        assert!(context.assets().get(&"index.html".into()).is_some());
+        assert!(context.assets().iter().any(|(key, _)| key.ends_with(".js")));
+    }
+
     use super::*;
     use discovery::agent_registry::AgentRegistry;
     use models::{AgentState, IdleLocation, Source, Status, Tier};
@@ -788,6 +665,7 @@ mod tests {
 
     fn make_agent_with_model(id: &str, model: &str) -> AgentState {
         AgentState {
+            name: model.to_string(),
             model: model.to_string(),
             ..make_agent(id)
         }
@@ -964,7 +842,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_two_sessions_same_project_map_to_different_agents() {
+    fn test_resolve_two_sessions_same_project_need_explicit_bindings() {
         let mut registry = AgentRegistry::new();
         registry.insert_for_test(make_agent("pid-100"));
         registry.insert_for_test(make_agent("pid-200"));
@@ -993,12 +871,9 @@ mod tests {
             None,
         );
 
-        assert!(result1.starts_with("pid-"));
-        assert!(result2.starts_with("pid-"));
-        assert_ne!(
-            result1, result2,
-            "Two sessions in same project must map to different agents"
-        );
+        assert_eq!(result1, log_id_1);
+        assert_eq!(result2, log_id_2);
+        assert!(mapping.is_empty(), "Don't assign sessions by iteration order");
     }
 
     #[test]
@@ -1082,7 +957,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_prefers_never_mapped_agent() {
+    fn test_resolve_does_not_treat_unmapped_pid_as_session_identity() {
         let mut registry = AgentRegistry::new();
         registry.insert_for_test(make_agent("pid-100"));
         registry.insert_for_test(make_agent("pid-200"));
@@ -1097,7 +972,7 @@ mod tests {
         cwd_map.insert("pid-100".to_string(), "/home/user/project".to_string());
         cwd_map.insert("pid-200".to_string(), "/home/user/project".to_string());
 
-        // New session should prefer pid-200 (never mapped) over pid-100 (stale mapping)
+        // Old allocations are not evidence of which process owns the new log.
         let result = resolve_agent_id(
             "log-project--new-session",
             &mut mapping,
@@ -1107,8 +982,8 @@ mod tests {
             None,
         );
         assert_eq!(
-            result, "pid-200",
-            "Should prefer never-mapped agent over previously-mapped one"
+            result, "log-project--new-session",
+            "Never-mapped does not prove session ownership"
         );
     }
 
@@ -1167,9 +1042,9 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_deterministic_pid_tiebreaker() {
+    fn test_resolve_refuses_pid_tiebreaker_for_ambiguous_sessions() {
         let mut registry = AgentRegistry::new();
-        // Both agents have same model and CWD — PID tiebreaker decides
+        // Same provider and workspace are insufficient for process identity.
         registry.insert_for_test(make_agent_with_model("pid-300", "claude"));
         registry.insert_for_test(make_agent_with_model("pid-100", "claude"));
         registry.insert_for_test(make_agent_with_model("pid-200", "claude"));
@@ -1179,7 +1054,8 @@ mod tests {
         cwd_map.insert("pid-200".to_string(), "/home/user/project".to_string());
         cwd_map.insert("pid-300".to_string(), "/home/user/project".to_string());
 
-        // Should always pick lowest PID (100) when model and mapped status are equal
+        // Even a previously cached guess must not pick the lowest PID.
+        mapping.insert("log-project--session".into(), ("pid-100".into(), Instant::now()));
         let result = resolve_agent_id(
             "log-project--session",
             &mut mapping,
@@ -1189,8 +1065,8 @@ mod tests {
             Some("claude"),
         );
         assert_eq!(
-            result, "pid-100",
-            "Should deterministically pick lowest PID among equal candidates"
+            result, "log-project--session",
+            "Ambiguous sessions must not pick the lowest PID"
         );
     }
 
@@ -1220,7 +1096,7 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_model_hint_with_no_hint_still_works() {
+    fn test_resolve_refuses_shared_workspace_without_provider_hint() {
         let mut registry = AgentRegistry::new();
         registry.insert_for_test(make_agent_with_model("pid-100", "gemini"));
         registry.insert_for_test(make_agent_with_model("pid-200", "claude"));
@@ -1229,7 +1105,7 @@ mod tests {
         cwd_map.insert("pid-100".to_string(), "/home/user/project".to_string());
         cwd_map.insert("pid-200".to_string(), "/home/user/project".to_string());
 
-        // No model hint — should still pick one (doesn't matter which)
+        // No hint — don't pick an arbitrary provider in a shared workspace.
         let result = resolve_agent_id(
             "log-project--session",
             &mut mapping,
@@ -1238,7 +1114,7 @@ mod tests {
             &cwd_map,
             None,
         );
-        assert!(result.starts_with("pid-"));
+        assert_eq!(result, "log-project--session");
     }
 
     #[test]
@@ -1265,14 +1141,14 @@ mod tests {
     }
 
     #[test]
-    fn test_resolve_model_hint_fallback_skips_mapped_agents() {
+    fn test_resolve_model_hint_does_not_allocate_ambiguous_processes() {
         let mut registry = AgentRegistry::new();
         registry.insert_for_test(make_agent_with_model("pid-100", "gemini"));
         registry.insert_for_test(make_agent_with_model("pid-200", "gemini"));
         let mut mapping = std::collections::HashMap::new();
         let cwd_map = std::collections::HashMap::new();
 
-        // First session claims pid-100
+        // Provider alone can't distinguish these two processes.
         let result1 = resolve_agent_id(
             "log-project--session1",
             &mut mapping,
@@ -1281,9 +1157,9 @@ mod tests {
             &cwd_map,
             Some("gemini"),
         );
-        assert_eq!(result1, "pid-100");
+        assert_eq!(result1, "log-project--session1");
 
-        // Second session should get pid-200 (pid-100 is already mapped)
+        // A second log must not arbitrarily claim the remaining PID either.
         let result2 = resolve_agent_id(
             "log-project--session2",
             &mut mapping,
@@ -1292,7 +1168,7 @@ mod tests {
             &cwd_map,
             Some("gemini"),
         );
-        assert_eq!(result2, "pid-200");
+        assert_eq!(result2, "log-project--session2");
     }
 
     #[test]

@@ -84,14 +84,7 @@ impl ParserRegistry {
             .unwrap_or_else(|| "unknown".to_string());
         let stem = path
             .file_stem()
-            .map(|s| {
-                let s = s.to_string_lossy();
-                if s.len() > 8 {
-                    s[..8].to_string()
-                } else {
-                    s.to_string()
-                }
-            })
+            .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_default();
         if stem.is_empty() {
             format!("log-{parent}")
@@ -124,13 +117,13 @@ impl ParserRegistry {
     pub fn parse_line(&self, path: &Path, line: &str) -> Option<ParsedEvent> {
         // 1. Explicit binding — longest prefix match
         if let Some(parser) = self.find_by_binding(path) {
-            return parser.parse_line(line);
+            return parser.parse_line_for_path(path, line);
         }
 
         // 2. Auto-detection fallback
         for parser in &self.parsers {
             if parser.can_parse(path, line) {
-                return parser.parse_line(line);
+                return parser.parse_line_for_path(path, line);
             }
         }
 
@@ -349,8 +342,8 @@ mod tests {
 
         let path = Path::new("/home/user/.claude/projects/myproj/abcdefgh-1234.jsonl");
         let id = reg.path_to_agent_id(path);
-        // Delegates to TestParser which uses default trait impl (8-char stem prefix)
-        assert_eq!(id, "log-myproj--abcdefgh");
+        // Delegates to the default trait implementation, keeping the full stem.
+        assert_eq!(id, "log-myproj--abcdefgh-1234");
     }
 
     #[test]
@@ -358,7 +351,7 @@ mod tests {
         let reg = ParserRegistry::new();
         let path = Path::new("/some/unknown/path/file12345678.jsonl");
         let id = reg.path_to_agent_id(path);
-        assert_eq!(id, "log-path--file1234");
+        assert_eq!(id, "log-path--file12345678");
     }
 
     #[test]

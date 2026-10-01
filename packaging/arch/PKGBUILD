@@ -1,6 +1,6 @@
 pkgname=officeai
 pkgver=0.1.0
-pkgrel=2
+pkgrel=6
 pkgdesc='Visualize and control AI agents in an isometric office'
 arch=('x86_64')
 url='https://github.com/raffinauvall/ai-agent-workspace'

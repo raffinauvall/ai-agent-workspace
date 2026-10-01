@@ -222,6 +222,22 @@ class OfficeApiException implements Exception {
   String toString() => message;
 }
 
+String? agentCreationBlocker(Map<String, dynamic> capabilities) {
+  if (capabilities['remoteControlEnabled'] != true) {
+    return 'Aktifkan Remote access di OfficeAI desktop dulu.';
+  }
+  if (capabilities['terminalController'] != true) {
+    return 'Kitty belum terpasang di laptop. Install Kitty lalu coba lagi.';
+  }
+  if (((capabilities['providers'] as List?) ?? const []).isEmpty) {
+    return 'CLI agent belum ditemukan. Install Codex, Claude, atau Gemini di laptop lalu coba lagi.';
+  }
+  if (((capabilities['workspaces'] as List?) ?? const []).isEmpty) {
+    return 'Tambahkan folder workspace yang diizinkan di pengaturan desktop dulu.';
+  }
+  return null;
+}
+
 class RemoteHomePage extends StatefulWidget {
   const RemoteHomePage({super.key});
   @override
@@ -238,7 +254,7 @@ class _RemoteHomePageState extends State<RemoteHomePage>
   Stats? _stats;
   String? _error;
   bool _busy = false;
-  Map<String, dynamic> _capabilities = const {};
+  bool _creatingAgent = false;
   WebViewController? _sceneController;
   bool _sceneReady = false;
   String? _sceneError;
@@ -291,7 +307,6 @@ class _RemoteHomePageState extends State<RemoteHomePage>
     final api = OfficeApi(baseUrl, token);
     try {
       final data = await api.load();
-      final capabilities = await api.capabilities();
       if (!mounted) {
         api.dispose();
         return;
@@ -301,7 +316,6 @@ class _RemoteHomePageState extends State<RemoteHomePage>
       setState(() {
         _agents = data.$1;
         _stats = data.$2;
-        _capabilities = capabilities;
         _busy = false;
       });
       _ensureSceneController();
@@ -345,85 +359,129 @@ class _RemoteHomePageState extends State<RemoteHomePage>
       _api = null;
       _stats = null;
       _agents = const [];
-      _capabilities = const {};
       _error = null;
     });
   }
 
   Future<void> _newAgent() async {
     final api = _api;
-    if (api == null) return;
+    if (api == null || _creatingAgent) return;
+    setState(() => _creatingAgent = true);
     final message = TextEditingController();
-    final providers = ((_capabilities['providers'] as List?) ?? const [])
-        .whereType<String>()
-        .toList();
-    final workspaces = ((_capabilities['workspaces'] as List?) ?? const [])
-        .whereType<Map>()
-        .map((item) => (item['id'] as String?) ?? '')
-        .where((id) => id.isNotEmpty)
-        .toList();
-    if (providers.isEmpty || workspaces.isEmpty) {
-      message.dispose();
-      setState(
-          () => _error = 'Provider atau workspace belum tersedia di desktop.');
-      return;
-    }
-    var provider = providers.first;
-    var workspaceId = workspaces.first;
-    final created = await showDialog<bool>(
-      context: context,
-      builder: (_) => StatefulBuilder(builder: (context, setDialogState) {
-        return AlertDialog(
-          title: const Text('New agent'),
-          content: Column(mainAxisSize: MainAxisSize.min, children: [
-            DropdownButtonFormField<String>(
-              initialValue: provider,
-              decoration: const InputDecoration(labelText: 'Provider'),
-              items: providers
-                  .map((item) =>
-                      DropdownMenuItem(value: item, child: Text(item)))
-                  .toList(),
-              onChanged: (value) =>
-                  setDialogState(() => provider = value ?? provider),
-            ),
-            DropdownButtonFormField<String>(
-              initialValue: workspaceId,
-              decoration: const InputDecoration(labelText: 'Workspace'),
-              items: workspaces
-                  .map((item) =>
-                      DropdownMenuItem(value: item, child: Text(item)))
-                  .toList(),
-              onChanged: (value) =>
-                  setDialogState(() => workspaceId = value ?? workspaceId),
-            ),
-            TextField(
-                controller: message,
-                maxLines: 3,
-                decoration: const InputDecoration(
-                    labelText: 'Initial instruction (optional)')),
-          ]),
-          actions: [
-            TextButton(
-                onPressed: () => Navigator.pop(context, false),
-                child: const Text('Batal')),
-            FilledButton(
-                onPressed: () => Navigator.pop(context, true),
-                child: const Text('Open terminal')),
-          ],
-        );
-      }),
-    );
-    if (created != true) {
-      message.dispose();
-      return;
-    }
     try {
-      await api.createAgent(provider, workspaceId, message.text);
-      if (mounted) setState(() => _error = 'Terminal $provider sedang dibuka…');
+      final capabilities = await api.capabilities();
+      if (!mounted || _api != api) return;
+      final blocker = agentCreationBlocker(capabilities);
+      if (blocker != null) throw OfficeApiException(blocker);
+      final providers = ((capabilities['providers'] as List?) ?? const [])
+          .whereType<String>()
+          .toList();
+      final workspaces = ((capabilities['workspaces'] as List?) ?? const [])
+          .whereType<Map>()
+          .map((item) => (item['id'] as String?) ?? '')
+          .where((id) => id.isNotEmpty)
+          .toList();
+      if (providers.isEmpty || workspaces.isEmpty) {
+        throw OfficeApiException(
+            'Provider atau workspace desktop tidak valid.');
+      }
+      var provider = providers.first;
+      var workspaceId = workspaces.first;
+      var submitting = false;
+      String? submitError;
+      final created = await showDialog<bool>(
+        context: context,
+        barrierDismissible: false,
+        builder: (_) => StatefulBuilder(builder: (context, setDialogState) {
+          return PopScope(
+              canPop: !submitting,
+              child: AlertDialog(
+                title: const Text('New agent'),
+                content: SingleChildScrollView(
+                    child: Column(mainAxisSize: MainAxisSize.min, children: [
+                  DropdownButtonFormField<String>(
+                    initialValue: provider,
+                    decoration: const InputDecoration(labelText: 'Provider'),
+                    items: providers
+                        .map((item) =>
+                            DropdownMenuItem(value: item, child: Text(item)))
+                        .toList(),
+                    onChanged: submitting
+                        ? null
+                        : (value) =>
+                            setDialogState(() => provider = value ?? provider),
+                  ),
+                  DropdownButtonFormField<String>(
+                    initialValue: workspaceId,
+                    decoration: const InputDecoration(labelText: 'Workspace'),
+                    items: workspaces
+                        .map((item) =>
+                            DropdownMenuItem(value: item, child: Text(item)))
+                        .toList(),
+                    onChanged: submitting
+                        ? null
+                        : (value) => setDialogState(
+                            () => workspaceId = value ?? workspaceId),
+                  ),
+                  TextField(
+                      controller: message,
+                      enabled: !submitting,
+                      maxLines: 3,
+                      decoration: const InputDecoration(
+                          labelText: 'Initial instruction (optional)')),
+                  if (submitError != null)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 12),
+                      child: Text(submitError!,
+                          style: TextStyle(
+                              color: Theme.of(context).colorScheme.error)),
+                    ),
+                ])),
+                actions: [
+                  TextButton(
+                      onPressed: submitting
+                          ? null
+                          : () => Navigator.pop(context, false),
+                      child: const Text('Batal')),
+                  FilledButton(
+                      onPressed: submitting
+                          ? null
+                          : () async {
+                              setDialogState(() {
+                                submitting = true;
+                                submitError = null;
+                              });
+                              try {
+                                await api.createAgent(
+                                    provider, workspaceId, message.text);
+                                if (context.mounted)
+                                  Navigator.pop(context, true);
+                              } catch (error) {
+                                if (context.mounted)
+                                  setDialogState(() {
+                                    submitting = false;
+                                    submitError = error.toString();
+                                  });
+                              }
+                            },
+                      child: Text(submitting ? 'Membuka…' : 'Open terminal')),
+                ],
+              ));
+        }),
+      );
+      if (created == true && mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text('Terminal $provider sedang dibuka di laptop.')));
+        await _refresh();
+      }
     } catch (error) {
-      if (mounted) setState(() => _error = error.toString());
+      if (mounted)
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            content: Text(error.toString()),
+            duration: const Duration(seconds: 8)));
     } finally {
       message.dispose();
+      if (mounted) setState(() => _creatingAgent = false);
     }
   }
 
@@ -608,7 +666,7 @@ class _RemoteHomePageState extends State<RemoteHomePage>
         ),
         actions: [
           IconButton(
-              onPressed: _newAgent,
+              onPressed: _creatingAgent ? null : _newAgent,
               tooltip: 'New agent',
               icon: const Icon(Icons.add)),
           IconButton(
@@ -859,7 +917,7 @@ class _AgentDetailSheetState extends State<_AgentDetailSheet> {
       _message.clear();
       setState(() => _receipt = queued
           ? 'Antrean tersimpan. Dikirim setelah task selesai.'
-          : 'Dikirim ke terminal. Tunggu aktivitas agent di timeline.');
+          : 'Dikirim ke ${widget.agent.name}. Status dan respons muncul di agent ini.');
       await _load();
     } catch (error) {
       if (mounted) setState(() => _error = error.toString());
@@ -1118,7 +1176,7 @@ class _AgentTile extends StatelessWidget {
           ),
           title: Text(agent.name, maxLines: 1, overflow: TextOverflow.ellipsis),
           subtitle: Text(
-            agent.task ?? _statusLabel(agent.status),
+            agent.activity ?? agent.task ?? _statusLabel(agent.status),
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
           ),

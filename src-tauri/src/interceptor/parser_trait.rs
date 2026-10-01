@@ -36,8 +36,13 @@ pub trait AgentLogParser: Send + Sync {
     /// Returns `None` if the line is irrelevant, malformed, or not parseable.
     fn parse_line(&self, line: &str) -> Option<ParsedEvent>;
 
+    /// Stateful parsers must keep different log files isolated.
+    fn parse_line_for_path(&self, _path: &Path, line: &str) -> Option<ParsedEvent> {
+        self.parse_line(line)
+    }
+
     /// Derive a unique agent ID from a log file path.
-    /// Default: `log-<parent_dir>--<stem_prefix_8chars>`
+    /// Default: `log-<parent_dir>--<full stem>`; prefixes are not unique session IDs.
     fn path_to_agent_id(&self, path: &Path) -> String {
         let parent = path
             .parent()
@@ -46,14 +51,7 @@ pub trait AgentLogParser: Send + Sync {
             .unwrap_or_else(|| "unknown".to_string());
         let stem = path
             .file_stem()
-            .map(|s| {
-                let s = s.to_string_lossy();
-                if s.len() > 8 {
-                    s[..8].to_string()
-                } else {
-                    s.to_string()
-                }
-            })
+            .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_default();
         if stem.is_empty() {
             format!("log-{parent}")

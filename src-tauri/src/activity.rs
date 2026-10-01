@@ -84,7 +84,7 @@ pub fn shared_activity_store() -> SharedActivityStore {
     Arc::new(Mutex::new(ActivityStore::new()))
 }
 
-fn sanitize(input: &str) -> String {
+pub(crate) fn sanitize(input: &str) -> String {
     let mut text = input.replace('\n', " ").replace('\r', " ");
     for key in ["authorization", "bearer", "api_key", "apikey", "access_token", "password"] {
         let lower = text.to_lowercase();
@@ -92,8 +92,7 @@ fn sanitize(input: &str) -> String {
             text.replace_range(index.., "[redacted]");
         }
     }
-    text.truncate(MAX_TEXT);
-    text
+    text.chars().take(MAX_TEXT).collect()
 }
 
 #[cfg(test)]

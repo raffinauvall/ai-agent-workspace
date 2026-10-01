@@ -42,7 +42,7 @@ impl AgentLogParser for GeminiCliParser {
     }
 
     /// Gemini: `~/.gemini/tmp/<project>/chats/session-<uuid>.json`
-    /// → `log-<project>--session-<first 16 chars>`
+    /// → `log-<project>--<full session filename>`
     fn path_to_agent_id(&self, path: &Path) -> String {
         let project = path
             .parent() // chats/
@@ -52,14 +52,7 @@ impl AgentLogParser for GeminiCliParser {
             .unwrap_or_else(|| "unknown".to_string());
         let stem = path
             .file_stem()
-            .map(|s| {
-                let s = s.to_string_lossy();
-                if s.len() > 16 {
-                    s[..16].to_string()
-                } else {
-                    s.to_string()
-                }
-            })
+            .map(|s| s.to_string_lossy().to_string())
             .unwrap_or_default();
         if stem.is_empty() {
             format!("log-{project}")
@@ -407,7 +400,7 @@ mod tests {
         let parser = GeminiCliParser;
         let path = Path::new("/home/user/.gemini/tmp/my-project/chats/session-abc123def456.json");
         let id = parser.path_to_agent_id(path);
-        assert!(id.starts_with("log-my-project--session-abc1"));
+        assert_eq!(id, "log-my-project--session-abc123def456");
     }
 
     #[test]

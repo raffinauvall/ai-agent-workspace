@@ -68,11 +68,13 @@ struct ParserState {
 /// Stateful: caches model, CWD, and token totals across log lines.
 pub struct CodexCliParser {
     state: Mutex<ParserState>,
+    sessions: Mutex<HashMap<PathBuf, CodexCliParser>>,
 }
 
 impl CodexCliParser {
     pub fn new() -> Self {
         Self {
+            sessions: Mutex::new(HashMap::new()),
             state: Mutex::new(ParserState {
                 last_status: None,
                 model: None,
@@ -348,6 +350,11 @@ impl CodexCliParser {
                     state.active_calls.insert(call_id, sub_entries);
                 }
 
+                let args = parse_function_call_args(payload).unwrap_or(Value::Null);
+                let detail = ["cmd", "file_path", "path", "description"].iter()
+                    .find_map(|key| args.get(key).and_then(Value::as_str))
+                    .map(crate::activity::sanitize)
+                    .unwrap_or_else(|| format!("tool: {tool_name}"));
                 Some(ParsedEvent {
                     status: Status::ToolUse,
                     model: state.model.clone(),
@@ -361,7 +368,7 @@ impl CodexCliParser {
                     activity: Some(ActivityInput {
                         kind: ActivityKind::ToolStart,
                         title: tool_name.to_string(),
-                        detail: Some(format!("tool: {tool_name}")),
+                        detail: Some(detail),
                     }),
                 })
             }
@@ -547,6 +554,11 @@ impl CodexCliParser {
 }
 
 impl AgentLogParser for CodexCliParser {
+    fn parse_line_for_path(&self, path: &Path, line: &str) -> Option<ParsedEvent> {
+        self.sessions.lock().unwrap().entry(path.to_path_buf())
+            .or_insert_with(Self::new).parse_line(line)
+    }
+
     fn name(&self) -> &str {
         "codex-cli"
     }
@@ -648,7 +660,7 @@ impl AgentLogParser for CodexCliParser {
     }
 
     /// Codex: `~/.codex/sessions/YYYY/MM/DD/rollout-<timestamp>-<uuid>.jsonl`
-    /// → `log-codex--<first 8 chars of uuid>`
+    /// → `log-codex--<full uuid>` (UUIDv7 prefixes collide within minutes).
     fn path_to_agent_id(&self, path: &Path) -> String {
         let stem = path
             .file_stem()
@@ -656,17 +668,13 @@ impl AgentLogParser for CodexCliParser {
             .unwrap_or_default();
 
         // UUID is the last 36 chars of the stem (8-4-4-4-12 format)
-        // Extract the first segment (8 hex chars) as the agent ID suffix
-        let uuid_prefix = if stem.len() >= 36 {
-            let uuid = &stem[stem.len() - 36..];
-            uuid.split('-').next().unwrap_or("unknown")
-        } else if stem.len() >= 8 {
-            &stem[..8]
+        let uuid = if stem.len() >= 36 && stem.is_char_boundary(stem.len() - 36) {
+            &stem[stem.len() - 36..]
         } else {
             &stem
         };
 
-        format!("log-codex--{uuid_prefix}")
+        format!("log-codex--{uuid}")
     }
 
     fn log_roots(&self) -> Vec<PathBuf> {
@@ -810,6 +818,29 @@ fn truncate_text(text: &str, max_chars: usize) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn interleaved_log_files_keep_models_cwds_tokens_and_ids_separate() {
+        let mut registry = crate::interceptor::parser_registry::ParserRegistry::new();
+        let index = registry.register_parser(std::sync::Arc::new(CodexCliParser::new()));
+        registry.bind_directory(PathBuf::from("/sessions"), index);
+        let a = Path::new("/sessions/rollout-019ce0f5-4bc7-7731-adcb-8b2c34306db1.jsonl");
+        let b = Path::new("/sessions/rollout-019ce0f5-1111-7731-adcb-8b2c34306db1.jsonl");
+        assert_ne!(registry.path_to_agent_id(a), registry.path_to_agent_id(b));
+        registry.parse_line(a, r#"{"type":"turn_context","payload":{"cwd":"/a","model":"gpt-a"}}"#);
+        registry.parse_line(b, r#"{"type":"turn_context","payload":{"cwd":"/b","model":"gpt-b"}}"#);
+        let first = registry.parse_line(a, EVENT_USER_MESSAGE).unwrap();
+        let second = registry.parse_line(b, EVENT_AGENT_MESSAGE).unwrap();
+        assert_eq!((first.cwd.as_deref(), first.model.as_deref()), (Some("/a"), Some("gpt-a")));
+        assert_eq!((second.cwd.as_deref(), second.model.as_deref()), (Some("/b"), Some("gpt-b")));
+        registry.parse_line(a, r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":100,"output_tokens":7}}}}"#);
+        registry.parse_line(b, r#"{"type":"event_msg","payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":400,"output_tokens":19}}}}"#);
+        let complete = r#"{"type":"event_msg","payload":{"type":"task_complete"}}"#;
+        let first = registry.parse_line(a, complete).unwrap();
+        let second = registry.parse_line(b, complete).unwrap();
+        assert_eq!((first.tokens_in, first.tokens_out), (Some(100), Some(7)));
+        assert_eq!((second.tokens_in, second.tokens_out), (Some(400), Some(19)));
+    }
 
     // --- Test constants: real Codex CLI event formats ---
 
@@ -1119,7 +1150,7 @@ mod tests {
         let path = Path::new(
             "/home/user/.codex/sessions/2026/03/12/rollout-2026-03-12T08-31-38-019ce0f5-4bc7-7731-adcb-8b2c34306db1.jsonl",
         );
-        assert_eq!(parser.path_to_agent_id(path), "log-codex--019ce0f5");
+        assert_eq!(parser.path_to_agent_id(path), "log-codex--019ce0f5-4bc7-7731-adcb-8b2c34306db1");
     }
 
     #[test]
@@ -1128,7 +1159,7 @@ mod tests {
         let path = Path::new(
             "/home/user/.codex/sessions/2026/03/07/rollout-2026-03-07T08-48-58-019cc745-5f68-7523-996b-ded2c130e905.jsonl",
         );
-        assert_eq!(parser.path_to_agent_id(path), "log-codex--019cc745");
+        assert_eq!(parser.path_to_agent_id(path), "log-codex--019cc745-5f68-7523-996b-ded2c130e905");
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use crate::activity::SharedActivityStore;
 use crate::discovery::agent_registry::SharedRegistry;
-use crate::managed_sessions::{control_capability, dispatch_prompt, ManagedSession, ManagedSessionState, Provider, SharedManagedSessions};
+use crate::managed_sessions::{control_capability, dispatch_prompt, find_executable, ManagedSession, ManagedSessionState, Provider, SharedManagedSessions};
 use crate::models::AppStats;
 use serde::{Deserialize, Serialize};
 use std::sync::{atomic::{AtomicBool, Ordering}, Arc};
@@ -167,7 +167,7 @@ fn capabilities_response(sessions: &SharedManagedSessions, enabled: bool) -> Str
     json_response(200, &serde_json::json!({"remoteControlEnabled": enabled, "terminalController": executable_available("kitty"), "providers": providers, "workspaces": workspaces}).to_string())
 }
 
-fn executable_available(name: &str) -> bool { std::env::var_os("PATH").map(|path| path.to_string_lossy().split(':').map(|dir| std::path::Path::new(dir).join(name)).any(|path| path.is_file())).unwrap_or(false) }
+fn executable_available(name: &str) -> bool { find_executable(name).is_some() }
 
 #[derive(Debug)]
 struct Request { method: String, path: String, headers: String, body: Vec<u8> }

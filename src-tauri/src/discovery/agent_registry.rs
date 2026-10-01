@@ -14,17 +14,20 @@ use tokio::sync::RwLock;
 #[derive(Debug, Default)]
 pub struct AgentRegistry {
     agents: HashMap<String, AgentState>,
+    handle: Option<AppHandle>,
 }
 
 impl AgentRegistry {
     pub fn new() -> Self {
         Self {
             agents: HashMap::new(),
+            handle: None,
         }
     }
 
     /// Register a new agent and emit agent:found event.
     pub fn register(&mut self, agent: AgentState, handle: &AppHandle) {
+        self.handle = Some(handle.clone());
         let id = agent.id.clone();
         app_log!(
             "REGISTRY",
@@ -88,6 +91,26 @@ impl AgentRegistry {
     /// Get all registered agents as a Vec.
     pub fn get_all(&self) -> Vec<AgentState> {
         self.agents.values().cloned().collect()
+    }
+
+    pub fn mark_prompt_sent(&mut self, id: &str, message: &str) -> Option<String> {
+        let mut agent = self.get(id)?;
+        agent.status = Status::Thinking;
+        agent.current_goal = Some(crate::activity::sanitize(message));
+        agent.current_task = agent.current_goal.clone();
+        agent.current_activity = Some("Prompt terkirim · menunggu respons agent".into());
+        agent.last_activity = chrono::Utc::now().to_rfc3339();
+        let timestamp = agent.last_activity.clone();
+        self.update_local(id, agent);
+        Some(timestamp)
+    }
+
+    pub fn update_local(&mut self, id: &str, agent: AgentState) {
+        if let Some(handle) = self.handle.clone() {
+            self.update(id, agent, &handle);
+        } else if self.agents.contains_key(id) {
+            self.agents.insert(id.into(), agent);
+        }
     }
 
     /// Return the number of registered agents.
@@ -164,6 +187,19 @@ pub fn new_shared_registry() -> SharedRegistry {
 mod tests {
     use super::*;
     use crate::models::{ControlMode, IdleLocation, Source, Status, Tier};
+
+    #[test]
+    fn sent_prompt_updates_only_its_target_and_keeps_a_safe_goal_preview() {
+        let mut registry = AgentRegistry::new();
+        registry.insert_for_test(make_agent("pid-100", 100));
+        registry.insert_for_test(make_agent("pid-200", 200));
+        registry.mark_prompt_sent("pid-200", &"日本語 ".repeat(200));
+        let selected = registry.get("pid-200").unwrap();
+        assert_eq!(selected.status, Status::Thinking);
+        assert!(selected.current_activity.unwrap().contains("menunggu respons"));
+        assert_eq!(selected.current_goal.unwrap().chars().count(), 240);
+        assert_eq!(registry.get("pid-100").unwrap().status, Status::Idle);
+    }
 
     fn make_agent(id: &str, pid: u32) -> AgentState {
         AgentState {

@@ -257,11 +257,35 @@ mod tests {
         // Focus a different window on the same server: delivery must still target the first.
         let second_window=run("kitten", &["@","--to",&address,"launch","--type","tab","--cwd",&dir.to_string_lossy(),"bash","-c","exec -a codex \"$1\" \"$2\" \"$3\"","fixture",&node.to_string_lossy(),&script.to_string_lossy(),&second.to_string_lossy()],None).await.unwrap();
         cleanup.windows.push(String::from_utf8(second_window).unwrap().trim().parse().unwrap());
-        snapshot(&second).await;
+        let second_pid = snapshot(&second).await["pid"].as_u64().unwrap() as u32;
+        let registry = crate::discovery::agent_registry::new_shared_registry();
+        for pid in [pid, second_pid] {
+            let process = crate::discovery::process_scanner::DetectedProcess {
+                pid, name:"codex".into(), cmdline:"codex".into(), start_time:0,
+                cwd:Some(dir.to_string_lossy().into()),
+            };
+            registry.write().await.insert_for_test(crate::discovery::process_scanner::process_to_agent_state(&process, &Default::default()));
+        }
+        let selected = format!("pid-{pid}"); let other = format!("pid-{second_pid}");
+        let sessions = crate::managed_sessions::shared_managed_sessions(vec![dir.clone()]);
+        let activities = crate::activity::shared_activity_store();
         let message="literal $(do-not-execute); `also literal`\nsecond line";
-        terminal.paste(message).await.unwrap();
+        assert!(!crate::managed_sessions::dispatch_prompt(&registry, &sessions, &activities, &selected, message, "now").await.unwrap());
         sleep(Duration::from_millis(300)).await;
         assert_eq!(snapshot(&first).await["events"][0]["message"],message);
+        assert_eq!(snapshot(&second).await["events"].as_array().unwrap().len(),0);
+        assert_eq!(registry.read().await.get(&selected).unwrap().status, crate::models::Status::Thinking);
+        assert_eq!(registry.read().await.get(&other).unwrap().status, crate::models::Status::Idle);
+        let echo = serde_json::json!({"type":"event_msg","payload":{"type":"user_message","message":message}}).to_string();
+        assert_eq!(sessions.lock().unwrap().agent_for_log("fixture-session", &echo, Some("codex"), Some(&dir.to_string_lossy())), Some(selected.clone()));
+        let response = r#"{"type":"event_msg","payload":{"type":"agent_message","message":"fixture response"}}"#;
+        assert_eq!(sessions.lock().unwrap().agent_for_log("fixture-session", response, Some("codex"), None), Some(selected.clone()));
+        assert!(crate::managed_sessions::dispatch_prompt(&registry, &sessions, &activities, &selected, "queued check", "queue").await.unwrap());
+        assert_eq!(snapshot(&first).await["events"].as_array().unwrap().len(), 1);
+        let (session, queued) = sessions.lock().unwrap().take_queued_for_agent(&selected).unwrap();
+        crate::managed_sessions::deliver_queued(session, queued, sessions.clone(), activities, registry.clone()).await;
+        sleep(Duration::from_millis(300)).await;
+        assert_eq!(snapshot(&first).await["events"][1]["message"], "queued check");
         assert_eq!(snapshot(&second).await["events"].as_array().unwrap().len(),0);
         let mut stale=terminal.clone(); stale.start_time+=1;
         assert!(stale.paste("must not arrive").await.is_err());
@@ -269,6 +293,6 @@ mod tests {
         assert!(wrong.paste("wrong window").await.is_err());
         terminal.key("ctrl+c").await.unwrap();
         sleep(Duration::from_millis(200)).await;
-        assert_eq!(snapshot(&first).await["events"][1]["kind"],"interrupt");
+        assert_eq!(snapshot(&first).await["events"][2]["kind"],"interrupt");
     }
 }
