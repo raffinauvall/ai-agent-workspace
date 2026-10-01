@@ -3,7 +3,7 @@
   import { initAgentsStore } from "$lib/stores/agents.svelte";
   import { initSettingsStore } from "$lib/stores/settings.svelte";
   import { selectAgent } from "$lib/stores/office.svelte";
-  import { ThreeOfficeScene } from "$lib/renderer";
+  import { ThreeOfficeScene } from "$lib/renderer/ThreeOfficeScene";
   import { initSoundBridge, destroySoundBridge } from "$lib/sound";
   import { TAURI_COMMANDS, type RemoteAccessInfo } from "$lib/types/index";
   import AgentSidebar from "$lib/ui/AgentSidebar.svelte";
@@ -12,6 +12,7 @@
   import SettingsPanel from "$lib/ui/SettingsPanel.svelte";
   import { t } from "$lib/i18n/index";
   import "$lib/ui/styles.css";
+  import officeMark from "../images/officeai-mark.svg";
 
   // Settings panel visibility
   let settingsOpen = $state(false);
@@ -123,6 +124,8 @@
 
 <!-- UI Overlay layer — all Svelte components sit above the canvas -->
 <div class="overlay-root" aria-label="UI overlay" role="region">
+
+  <div class="office-brand"><img src={officeMark} alt="" width="38" height="38" /><div>OfficeAI<span>WORKSPACE BY NOX14</span></div></div>
 
   <!-- Floating HUD widgets (top-right) -->
   <div class="hud-stack">
@@ -239,9 +242,11 @@
   }
 
   /* Settings button — top-left, always visible */
+  .office-brand { position: fixed; top: 14px; left: 16px; display: flex; align-items: center; gap: 9px; color: #eff5ff; font-size: 16px; font-weight: 700; text-shadow: 0 1px 5px #17233b; }
+  .office-brand span { display: block; font-size: 8px; letter-spacing: 1.4px; color: #cdd9eb; margin-top: 2px; }
   .settings-trigger {
     position: fixed;
-    top: 16px;
+    top: 66px;
     left: 16px;
     z-index: var(--z-hud);
     pointer-events: all;
@@ -250,7 +255,7 @@
 
   .remote-trigger {
     position: fixed;
-    top: 58px;
+    top: 106px;
     left: 16px;
     z-index: var(--z-hud);
     pointer-events: all;
@@ -270,9 +275,10 @@
 
   .remote-card {
     position: fixed;
-    top: 98px;
+    top: 146px;
     left: 16px;
     z-index: var(--z-modal);
+    pointer-events: all;
     width: min(360px, calc(100vw - 32px));
     padding: 14px;
     border: 1px solid #4a4863;

@@ -188,6 +188,7 @@ mod tests {
                 completed_sub_agent_ids: vec![],
                 timestamp: "2026-01-01T00:00:00Z".to_string(),
                 cwd: None,
+                activity: None,
             })
         }
 
@@ -239,6 +240,7 @@ mod tests {
                 completed_sub_agent_ids: vec![],
                 timestamp: "2026-01-01T00:00:00Z".to_string(),
                 cwd: None,
+                activity: None,
             })
         }
 

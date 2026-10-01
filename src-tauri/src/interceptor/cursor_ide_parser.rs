@@ -91,6 +91,7 @@ impl AgentLogParser for CursorIdeParser {
                     completed_sub_agent_ids: vec![],
                     timestamp,
                     cwd: None,
+                    activity: None,
                 })
             }
             "assistant" => Some(ParsedEvent {
@@ -103,6 +104,7 @@ impl AgentLogParser for CursorIdeParser {
                 completed_sub_agent_ids: vec![],
                 timestamp,
                 cwd: None,
+                activity: None,
             }),
             _ => None,
         }

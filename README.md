@@ -1,440 +1,322 @@
 <p align="center">
-  <img src="images/icon.png" width="120" alt="OfficeAI" />
-</p>
-
-<p align="center">
-  <img src="https://img.shields.io/badge/status-active%20development-brightgreen?style=for-the-badge" alt="Status" />
-  <img src="https://img.shields.io/badge/version-0.6.0-blue?style=for-the-badge" alt="Version" />
-  <img src="https://img.shields.io/badge/tauri-v2-orange?style=for-the-badge" alt="Tauri" />
-  <img src="https://img.shields.io/badge/svelte-5-red?style=for-the-badge" alt="Svelte" />
-  <img src="https://img.shields.io/badge/pixi.js-v8-purple?style=for-the-badge" alt="PixiJS" />
-  <img src="https://img.shields.io/badge/tests-~672-green?style=for-the-badge" alt="Tests" />
-</p>
-
-<p align="center">
-  <a href="https://dykyi-roman.github.io/projects/office-ai/index.html"><b>🌐 Website</b></a> · <a href="https://github.com/dykyi-roman/office-ai"><b>GitHub</b></a>
+  <img src="images/officeai-mark.svg" width="108" alt="OfficeAI logo — nox14" />
 </p>
 
 <h1 align="center">OfficeAI</h1>
+<p align="center"><strong>Your agents. One living workspace.</strong><br />
+Kantor 3D untuk memantau AI dan mengirim instruksi dari HP.</p>
 
 <p align="center">
-  <b>Desktop app that turns your AI agents into employees of a virtual isometric office</b>
+  <a href="#install-desktop">Install desktop</a> ·
+  <a href="#android">Android</a> ·
+  <a href="#prompt-agent-yang-sudah-jalan">Kontrol agent</a> ·
+  <a href="docs/OFFICE_UPGRADE_PLAN.md">Plan & acceptance gates</a>
 </p>
 
-<p align="center">
-  Every running AI agent (Claude Code, Gemini CLI, Codex CLI, ChatGPT, ...) appears as an animated character in a 2D isometric office. Install, open — see all your agents in real time. Zero changes to your CLI workflow required.
-</p>
+<p align="center"><img src="images/office-3d.png" width="960" alt="OfficeAI 3D preview with six original Gen Z avatars" /><br /><sub>Preview lokal dengan agent simulasi; status penggunaan asli berasal dari desktop.</sub></p>
 
----
+## Tentang OfficeAI
 
-## Contents
+OfficeAI mengubah aktivitas AI menjadi kantor virtual: satu agent, satu karakter.
+Saat bekerja, karakter duduk di meja. Saat idle, mereka berkeliling, istirahat,
+membuat kopi, merokok, atau mengoprek café racer biru di garasi.
 
-- [Quick Start](#quick-start)
-- [Arch Linux](#arch-linux)
-- [Basic Usage](#basic-usage)
-- [Concept](#concept)
-- [App Tour](#app-tour)
-- [How It Works](#how-it-works)
-- [Model Tiers](#model-tiers)
-- [Agent Lifecycle](#agent-lifecycle)
-- [Idle Zones](#idle-zones)
-- [Agent Discovery](#agent-discovery)
-- [Browser Extension](#browser-extension)
-- [IDE Support](#ide-support)
-- [Troubleshooting](#troubleshooting)
-- [Non-Goals](#non-goals)
-- [Roadmap](#roadmap)
-- [Commands](#commands)
-- [Tech Stack](#tech-stack)
-- [Cross-Platform Support](#cross-platform-support)
-- [Documentation](#documentation)
+Versi ini dikembangkan oleh **nox14**: kantor modern, karakter muda bergaya
+hoodie/streetwear, dan companion Android dengan renderer Three.js yang sama.
+Bukan video streaming desktop dan bukan replika 2D di HP.
 
----
+### Yang ada sekarang
 
-## Quick Start
+| Fitur | Perilaku |
+| --- | --- |
+| Avatar original ber-rig | Hoodie, topi, beanie, headset, kacamata, dan gaya tech freak; fashion konsisten berdasarkan ID agent |
+| Animasi | Idle, jalan, duduk, kerja, merokok, dan reparasi motor; crossfade antarpose |
+| Kantor 3D | Meja modern, meeting room kaca, lounge, coffee station, dispenser, garasi, dan city backdrop |
+| Navigasi | Rute menghindari furnitur dan dinding; kaki bergerak mengikuti kecepatan jalan |
+| Desktop + Android | Model dan geometri kantor dari satu renderer; kamera bisa diputar, di-zoom, di-reset, atau difokuskan ke agent |
+| Kontrol agent aktif | Attach ke window Kitty atau pane tmux yang identitasnya terverifikasi |
+| Composer HP | Kirim saat siap, antrekan saat sibuk, interrupt dengan konfirmasi; draft tidak dihapus jika kirim gagal |
+| Timeline | Status, tool, respons, error, dan receipt pengiriman; diperbarui selama sheet terbuka |
 
-### Prerequisites
+Status kerja berasal dari proses dan log agent, **bukan animasi sibuk yang dibuat-buat**.
+Keakuratan aktivitas bergantung pada format log provider dan sesi yang terdeteksi.
 
-- [Node.js](https://nodejs.org/) >= 22
-- [Rust](https://rustup.rs/) >= 1.75
-- System dependencies for [Tauri v2](https://tauri.app/start/prerequisites/)
+## Install desktop
 
-### Install & Run
+Pengguna paket release tidak perlu Node.js, Rust, atau menjalankan dev server.
+Library sistem tetap diperlukan; package manager akan memasang dependency yang tercantum.
+
+### Arch Linux / Manjaro
+
+Gunakan paket Arch, **bukan** `.deb`:
 
 ```bash
-make install
-make dev
+sudo pacman -U ./officeai-0.1.0-2-x86_64.pkg.tar.zst
+officeai
 ```
 
-The app opens in a native 1280x800 window. The Rust backend automatically starts scanning processes and logs.
-
-### Arch Linux
-
-Arch and Manjaro need Tauri's native build dependencies before `make install`:
+OfficeAI muncul di app launcher. Untuk uninstall:
 
 ```bash
-sudo pacman -S --needed base-devel nodejs npm rust \
-  webkit2gtk-4.1 gtk3 libayatana-appindicator librsvg patchelf
-
-git clone https://github.com/dykyi-roman/office-ai.git
-cd office-ai
-make install
-make dev
+sudo pacman -R officeai
 ```
 
-The `.deb` package is for Ubuntu, Debian, and other Debian-based distributions. On Arch, run the built binary directly:
+Jika membangun dari source:
 
 ```bash
-./src-tauri/target/release/OfficeAI
+sudo pacman -S --needed base-devel nodejs npm rust webkit2gtk-4.1 gtk3
+git clone https://github.com/raffinauvall/ai-agent-workspace.git
+cd ai-agent-workspace
+npm ci
+CARGO_BUILD_JOBS=2 npm run tauri -- build --no-bundle
+cd packaging/arch
+makepkg --force
+sudo pacman -U ./officeai-0.1.0-2-x86_64.pkg.tar.zst
 ```
 
-If AppImage packaging fails at `linuxdeploy`, use `make dev` while developing or run the native release binary above.
+Node.js 22+ dan Rust diperlukan hanya untuk build. Jika memakai rustup, aktifkan
+environment Cargo sebelum build: `source "$HOME/.cargo/env"`.
+`CARGO_BUILD_JOBS=2` membatasi paralelisme compile pada laptop, bukan penggunaan CPU aplikasi.
 
----
+### Ubuntu / Debian
 
-## Basic Usage
+Build paket distro ini dari source dengan dependency
+[Tauri Linux](https://v2.tauri.app/start/prerequisites/#linux):
 
-1. **Launch OfficeAI:** Start the app using `make dev` or open the installed binary.
-2. **Run your AI Agent:** Open a **separate terminal** and start your preferred agent (e.g., `claude`, `gemini-cli`, or `codex`).
-3. **Watch the Office:** OfficeAI will automatically detect the new process. An employee character will appear, walk to their assigned desk, and begin reflecting the agent's real-time state (thinking, typing, or using tools).
-4. **Interact:** Hover over agents to see their latest response or click the status bar to see a full list of active employees.
-
----
-
-## Concept
-
-Each running AI agent is mapped to an animated office employee in a 2D isometric scene.
-
-**Key principles:**
-
-- **1 agent = 1 person** — each AI agent process maps to a virtual employee
-- **Agent naming** — `{model name}-{PID}`, e.g. `claude-423235`, `gemini-23512`, `codex-54321`, `chatgpt-78901`
-- **Open space** — every agent has a personal desk
-- **Zero-intrusion** — the app never modifies or wraps CLI agents
-- **Auto-discovery** — the system detects running agents automatically
-
----
-
-## App Tour
-
-A quick walkthrough of what you see when you use OfficeAI.
-
-<p align="center"><img src="images/office_map.png" width="700" alt="Full office view"></p>
-
-**Your AI agents, visualized as office employees.** When you open OfficeAI, you see a full isometric office floor. Each running AI agent occupies its own desk. The status bar at the bottom shows the total agent count, and the settings button is in the top-left corner.
-
-<p align="center"><img src="images/agent_is_working.png" width="350" alt="Working agent with bouncing balls"></p>
-
-**Bouncing balls mean the agent is busy.** Colored balls appear above an agent's head when it is actively thinking, responding, or using tools. The ball color reflects the model tier — gold for expert models, blue for senior, and so on.
-
-<p align="center"><img src="images/agent_is_idle.png" width="350" alt="Idle agent roaming the office"></p>
-
-**No balls — the agent is free.** When an agent finishes its task, the balls disappear and the character leaves its desk to roam the office — visiting the water cooler, sofa, or kitchen. The process is still running, just waiting for your next prompt.
-
-<p align="center"><img src="images/tool_tip_message.png" width="350" alt="Speech bubble with agent response"></p>
-
-**Speech bubbles show what agents are saying.** Hover over a working agent to see a preview of its response right inside the office, without switching to your terminal or browser.
-
-<p align="center"><img src="images/cancelled_request.png" width="400" alt="Cancelled request visualization"></p>
-
-**Cancellations are detected in real-time.** If you interrupt an agent's task in your terminal (Ctrl+C), OfficeAI detects this state change instantly. The agent stops its current activity and returns to its idle routine.
-
-<p align="center"><img src="images/agents_popup_window.png" width="400" alt="Agents panel listing all agents"></p>
-
-**Click the status bar to see all agents.** The agents panel lists every detected agent along with its current status — Thinking, Using tool, Responding, Idle, and more. Use it to quickly check who is busy and who is available.
-
-<p align="center"><img src="images/sub_agents_popup_window.png" width="400" alt="Sub-agents panel showing background tasks"></p>
-
-**Sub-agents handle delegated work.** Click the SUB-AGENTS tab to see background tasks that a main agent has spawned. This gives you visibility into parallel work happening behind the scenes.
-
-<p align="center"><img src="images/icon_counter.png" width="120" alt="Dock icon with active agent count badge"></p>
-
-**The app icon shows the active agent count.** A red badge on your dock or taskbar icon tells you how many agents are currently working. One glance is enough to know if something is running — no need to open the app.
-
-<p align="center"><img src="images/settings_general.png" width="400" alt="Settings — General tab"></p>
-
-**General settings let you control core behavior.** Open Settings from the top-left gear icon. The General tab includes scan interval, animation speed, max agents, and other global preferences.
-
-<p align="center"><img src="images/settings_discovery.png" width="400" alt="Settings — Discovery tab"></p>
-
-**Discovery settings configure how agents are found.** The Discovery tab controls process scanning parameters and log file monitoring for each supported agent type.
-
-<p align="center"><img src="images/settings_display.png" width="400" alt="Settings — Display tab"></p>
-
-**Display settings customize the visual experience.** The Display tab adjusts office layout, zoom level, speech bubble behavior, and other rendering preferences.
-
----
-
-## How It Works
-
-OfficeAI operates on a **zero-intrusion** principle — it only observes AI agents, never interferes with their work.
-
-```
-OS Processes (sysinfo)    Agent log files       Chrome Extension
-        │                       │               (MV3 + Native Messaging)
-        ▼                       ▼                       │
-  Process Scanner (2s)  Log Watcher (500ms)    Extension HTTP Server
-        │                       │               (localhost:7842)
-        └──────────┬────────────┴───────────────────────┘
-                   ▼
-           Agent Registry ──► Tauri IPC Events
-                   │
-        ┌──────────┴──────────┐
-        ▼                     ▼
-   Svelte UI             PixiJS Renderer
-   (overlay)             (isometric scene)
+```bash
+npm ci
+npm run tauri -- build --bundles deb
 ```
 
-1. **Process Scanner** discovers CLI agents via OS process list
-2. **Log Watcher** reads agent log files for status changes
-3. **Chrome Extension** observes browser AI chats (ChatGPT, Gemini, Claude.ai) via DOM MutationObserver
-4. **State Classifier** (FSM with debounce) determines agent state
-5. **Agent Registry** maintains state, emits Tauri IPC events, and updates the app icon badge
-6. **Frontend** renders agents as animated characters in an isometric office
+Hasil ada di `src-tauri/target/release/bundle/deb/`.
+Buka `.deb` dengan installer paket desktop jika tersedia, atau gunakan
+`sudo apt install ./NAMA_PAKET.deb`. `.deb` tidak ditujukan untuk Arch.
 
-The app icon badge displays the number of active agents directly on the dock (macOS) or taskbar (Linux), so you always know how many agents are working without switching to the app window.
+### Windows / macOS
 
-**Bug Report:** If you encounter a bug, open Settings and click **Bug Report** to save a diagnostic JSON file. Attach it to a [GitHub Issue](https://github.com/dykyi-roman/office-ai/issues) — no data is sent automatically.
+Source Tauri menyediakan target installer Windows dan macOS. Build pada OS target
+dengan prerequisite Tauri yang sesuai. **Build dan attach terminal versi ini
+diverifikasi di Linux; attach Kitty/tmux belum tersedia di Windows/macOS.**
+Jangan menganggap file Linux bisa dipasang di Windows.
 
----
+## Mulai memakai desktop
 
-## Model Tiers
+1. Buka OfficeAI dari launcher atau jalankan `officeai`.
+2. Jalankan CLI AI di terminal. Agent lokal yang didukung akan terdeteksi.
+3. Klik karakter atau daftar agent untuk melihat workspace, status, dan timeline.
+4. Putar kamera dengan drag; scroll/pinch untuk zoom. Drag tidak dianggap sebagai tap karakter.
+5. Untuk akses HP, buka **Remote → Buka tunnel**, lalu salin URL dan token.
 
-When the backend receives a model name from agent logs (e.g. `"claude-opus-4-6"`), it classifies it into one of four tiers:
+Agent CLI yang didukung untuk attach saat ini: **Codex, Claude Code, Gemini CLI**.
+Deteksi browser/IDE dan extension lama tetap ada, tetapi sesi browser/IDE tidak
+otomatis memiliki transport prompt. Nama provider yang muncul bukan jaminan
+sesi itu bisa dikontrol.
 
-| Tier         | Keywords in model name                                         | Examples                                  |
-|--------------|----------------------------------------------------------------|-------------------------------------------|
-| **Expert**   | `opus`, `ultra`, `gpt-4o` (no `-mini`), `o1-*`, `o3-*` (no `-mini`) | Claude Opus 4, GPT-4o, Gemini Ultra, o3   |
-| **Senior**   | `sonnet`, `pro`, `gpt-4` (not `gpt-4o`)                       | Claude Sonnet 4, GPT-4-turbo, Gemini Pro  |
-| **Middle**   | Everything else (fallback)                                     | Any unknown model                         |
-| **Junior**   | `haiku`, `nano`, `flash`, `gpt-3.5`, `-mini`                  | Claude Haiku 4, GPT-4o-mini, Gemini Flash |
+## Prompt agent yang sudah jalan
 
-> **Check order matters:** Junior is checked first (so `-mini` catches `o1-mini`, `o3-mini` before Expert). Then Expert, Senior. Everything else — Middle.
+Percakapan agent yang sudah aktif **tidak diganti dengan sesi baru**.
+OfficeAI mengirim input ke terminal yang sedang menjalankannya, setelah memeriksa:
 
-### Work Indicator
+- PID dan waktu mulai proses, sehingga PID yang dipakai ulang ditolak.
+- Provider dan workspace canonical.
+- Process group foreground.
+- Socket milik user yang sama.
+- ID window Kitty atau pane tmux dan hubungan prosesnya.
 
-When an agent is working (thinking, responding, tool_use), **three animated bouncing balls** appear above its sprite. The ball color is determined by model tier. Balls disappear when the agent finishes and transitions to idle.
+Dua agent dalam workspace yang sama tetap ditargetkan secara terpisah.
+Tidak ada endpoint untuk menjalankan raw shell dari HP.
 
-| Tier         | Color                      |
-|--------------|----------------------------|
-| **Expert**   | 🟡 Gold `#FFD700`       |
-| **Senior**   | 🔵 Blue `#4A90E2`       |
-| **Middle**   | 🟢 Green `#5CB85C`      |
-| **Junior**   | ⚪ Gray `#AAAAAA`       |
+### Opsi A — Kitty
 
-Balls are positioned horizontally above the sprite head and animated with a staggered sine wave (bounce). Animation speed is controlled by the `animationSpeed` setting.
+Jalankan terminal dengan socket Unix dan remote control terbatas ke socket:
 
----
-
-## Agent Lifecycle
-
-The visual state of an agent directly reflects its process status:
-
-```
-                    ┌─────────────────────────────────┐
-                    │                                 │
-                    ▼                                 │
-┌──────┐    ┌──────────────┐    ┌──────────┐    ┌─────┴──────┐
-│ Idle │───▶│ Walking      │───▶│ Thinking │───▶│ Responding │
-│      │    │ to desk      │    │          │    │            │
-└──┬───┘    └──────────────┘    └────┬─────┘    └─────┬──────┘
-   │                                 │                │
-   │                                 ▼                ▼
-   │                           ┌──────────┐    ┌────────────┐
-   │                           │ Tool Use │    │ Collabora- │
-   │                           └────┬─────┘    │ tion       │
-   │                                │          └─────┬──────┘
-   │                                ▼                │
-   │                          ┌───────────┐          │
-   │◀─────────────────────────│ Task      │◀─────────┘
-   │                          │ Complete  │
-   │                          └───────────┘
-   │
-   │         ┌─────────┐    ┌──────────┐
-   └────────▶│  Error  │    │ Offline  │
-             └─────────┘    └──────────┘
+```bash
+kitty --listen-on unix:/tmp/officeai-kitty.sock \
+  --override allow_remote_control=socket-only
 ```
 
-### State Table
+Di window tersebut, masuk ke project lalu jalankan `codex`, `claude`, atau
+`gemini`. OfficeAI membaca alamat socket dan ID window dari environment proses.
 
-| State               | Trigger                                          | Animation                                                  | Visual Indicator                                        |
-|---------------------|--------------------------------------------------|------------------------------------------------------------|---------------------------------------------------------|
-| **Idle**            | Process running, no active request               | Agent roams the office: cooler, kitchen, sofa, etc.        | Relaxed pose, subtle idle animation                     |
-| **Walking to desk** | New prompt/task received                         | Agent walks from current location to desk (A* pathfinding) | Walking animation                                       |
-| **Thinking**        | Waiting for LLM response (streaming not started) | Sitting at desk, typing animation                          | Colored bouncing balls above head (color by model tier) |
-| **Responding**      | Token streaming                                  | Active typing animation                                    | Speech bubble with response text preview                |
-| **Tool use**        | Agent executes shell command, reads files, etc.  | Reaches for folder / types in terminal                     | Colored bouncing balls above head                       |
-| **Collaboration**   | Multi-agent context or sub-agent spawned         | Agent sits at desk                                         | Status in data model; visual delegation *(planned)*     |
-| **Task complete**   | Response finished, transitioning to idle         | Agent stands up, walks back to previous location           | Bouncing balls disappear                                |
-| **Error**           | Request failed / crash                           | Agent grabs head, frustration gesture                      | Red exclamation mark                                    |
-| **Offline**         | Process terminated                               | Аgent go to the door                                       | Gray semi-transparent avatar                            |
+**Sesi lama bisa di-attach jika sudah memiliki socket remote control.**
+Agent yang terlanjur berjalan di terminal tanpa transport ini tidak bisa diberi
+kontrol hanya dari PID. UI menampilkan alasan dan tindakan pemulihan, bukan
+tombol kirim yang pura-pura berhasil. Jangan menyalakan remote control tanpa
+pembatasan untuk semua aplikasi.
 
----
+### Opsi B — tmux
 
-## Idle Zones
+```bash
+tmux new-session -s ai-workspace
+# Di pane tmux: masuk ke project, lalu jalankan CLI agent.
+```
 
-When an agent has no active task, it randomly roams between rest areas in the office:
+OfficeAI memakai socket tmux dan ID pane, bukan pane yang kebetulan sedang aktif.
+Keluar dari copy-mode dan pastikan agent berada di foreground sebelum mengirim.
 
-| Location                            | Animation                                      |
-|-------------------------------------|------------------------------------------------|
-| **Water Cooler** (`water_cooler`)   | Agent pours and drinks water                   |
-| **Kitchen** (`kitchen`)             | Interacts with coffee machine                  |
-| **Sofa** (`sofa`)                   | Reads / scrolls phone                          |
-| **Meeting Room** (`meeting_room`)   | Whiteboard discussion (for multi-agent setups) |
-| **Standing Desk** (`standing_desk`) | Stretching / casual browsing                   |
-| **Bathroom** (`bathroom`)           | Agent stepped away                             |
-| **HR Zone** (`hr_zone`)             | Chatting at the HR stand                       |
-| **Lounge** (`lounge`)               | Relaxing in the lounge area                    |
+Kitty/tmux dan CLI provider harus tersedia di PATH aplikasi desktop.
+Agent yang dibuat melalui tombol **New agent** menggunakan Kitty dan workspace
+allowlist desktop; konfigurasi `remote_workspaces` ada di
+`~/.config/office-ai/config.toml`.
 
----
+## Android
 
-## Agent Discovery
+Android app adalah companion: desktop OfficeAI dan terminal agent harus tetap hidup.
+Model GLB ditanam ke bundle scene lokal, sehingga render tidak perlu mengunduh
+asset lewat tunnel. Data agent dan prompt tetap membutuhkan koneksi ke desktop.
 
-The system uses different detection strategies depending on the agent type:
+### Build APK
 
-| Agent Type              | Status        | Detection Method                                                                               | State Extraction                                                                      |
-|-------------------------|---------------|------------------------------------------------------------------------------------------------|---------------------------------------------------------------------------------------|
-| **Claude Code (CLI)**   | Implemented   | Process scanning via `sysinfo` crate. Monitoring `~/.claude/projects/` directory               | Log file parsing: `user_prompt`, `assistant_start`, `tool_use`, `assistant_end`       |
-| **Gemini CLI**          | Implemented   | Process scanning (`gemini`, `node.*gemini`). Monitoring `~/.gemini/tmp/` directory              | JSON-array session parsing: `user`, `gemini`, `info` messages                          |
-| **Codex CLI**           | Implemented   | Process scanning (`codex`). Monitoring `~/.codex/sessions/` directory                          | JSONL parsing: `message`, `function_call_output`, `exec_result` events                 |
-| **Cursor (IDE)**        | Implemented   | Process scanning (`Cursor`) with TTY bypass for GUI apps. Monitoring `~/.cursor/ai-tracking/`  | File activity monitoring: `mtime` changes on AI tracking database                      |
-| **Windsurf (IDE)**      | Implemented   | Process scanning (`Windsurf`) with TTY bypass for GUI apps. Monitoring `~/.codeium/windsurf/cascade/` + `~/.codeium/implicit/` + `~/.codeium/cascade/` | File activity monitoring: `mtime` changes on Codeium protobuf files            |
-| **ChatGPT (Browser)**   | Implemented   | Chrome MV3 extension with DOM MutationObserver on `chatgpt.com`                                | CSS selector detection: stop button, streaming response, code interpreter               |
-| **Gemini (Browser)**    | Implemented   | Chrome MV3 extension with DOM MutationObserver on `gemini.google.com`                          | Web Component attributes: `model-response[loading]`, `mat-progress-spinner`             |
-| **Claude (Browser)**    | Implemented   | Chrome MV3 extension with DOM MutationObserver on `claude.ai`                                  | CSS selector detection: `[data-is-streaming]`, artifact panel, thinking indicator        |
+Install Flutter, Android SDK, dan JDK terlebih dahulu. Dari root repo:
 
----
+```bash
+npm ci
+npm run build:mobile-scene
+cd mobile
+flutter pub get
+flutter build apk --release
+```
 
-## Browser Extension
+APK: `mobile/build/app/outputs/flutter-apk/app-release.apk`.
 
-OfficeAI includes a Chrome MV3 extension that tracks AI agent activity directly in browser tabs. It monitors **ChatGPT**, **Gemini**, and **Claude.ai** sessions in real time — each open chat appears as a separate employee in the office, just like CLI agents.
+Penting: setelah mengubah renderer atau model, **build scene sebelum build APK**.
+Hot reload Flutter tidak membangun ulang TypeScript/GLB secara otomatis.
 
-<p align="center"><img src="images/browser.png" width="700" alt="Browser extension tracking ChatGPT, Gemini, and Claude agents"></p>
+Install manual atau lewat USB debugging:
 
-**How it works:**
+```bash
+adb devices -l
+adb install -r mobile/build/app/outputs/flutter-apk/app-release.apk
+```
 
-- Content scripts use `MutationObserver` to detect DOM changes on AI chat pages (streaming responses, thinking indicators, tool use)
-- The background Service Worker bridges content scripts to a Native Messaging Host (Node.js)
-- The host forwards agent state via HTTP to the Tauri desktop app (`localhost:7842`)
-- Each browser tab gets a unique agent ID: `browser-{platform}-{hash}` (e.g. `browser-chatgpt-a1b2c3d4`)
+Development lewat USB:
 
-For full details — architecture, CSS selectors, detection algorithms, native messaging protocol — see [EXTENSION.md](docs/EXTENSION.md).
+```bash
+cd mobile
+flutter devices
+flutter run -d DEVICE_ID
+```
 
----
+Flutter harus dijalankan dari folder `mobile`, tempat `pubspec.yaml` berada.
+APK release lokal saat ini memakai debug signing key untuk pengujian pribadi;
+siapkan signing key release sendiri sebelum distribusi publik.
 
-## IDE Support
+### Connect dan kirim prompt
 
-OfficeAI natively supports **Cursor** and **Windsurf** — two popular AI-powered code editors. Their built-in AI assistants are detected automatically and appear as office employees, just like CLI agents.
+1. Desktop: **Remote → Buka tunnel**.
+2. HP: masukkan URL tunnel terbaru dan bearer token; prefix `Bearer ` boleh disertakan.
+3. Tap karakter atau kartu agent. Kamera memfokuskan agent yang sama.
+4. Terminal terhubung: composer tampil di bawah sheet, tetap terjangkau saat keyboard terbuka.
+5. Agent siap: **Kirim**. Agent sibuk: **Antrekan**. Untuk menghentikan task lebih dulu, pilih **Interrupt** dan konfirmasi.
+6. Baca receipt, kemudian timeline. “Dikirim ke terminal” bukan klaim bahwa AI sudah menjalankan task.
+7. Tombol fullscreen memperluas kantor; tombol reset mengembalikan pandangan seluruh ruangan.
 
-| IDE | Detection | Monitored Paths | State Extraction |
-|-----|-----------|-----------------|------------------|
-| **Cursor** | Process scanning (`Cursor`) with TTY bypass for GUI apps | `~/.cursor/ai-tracking/` | File activity monitoring: `mtime` changes on AI tracking database |
-| **Windsurf** | Process scanning (`Windsurf`) with TTY bypass for GUI apps | `~/.codeium/windsurf/cascade/`, `~/.codeium/implicit/`, `~/.codeium/cascade/` | File activity monitoring: `mtime` changes on Codeium protobuf files |
+Antrean dibatasi satu prompt per agent. Jika delivery gagal, backend mempertahankan
+antrean di memori. Antrean belum persisten lintas restart desktop. POST yang timeout
+tidak dikirim ulang otomatis: periksa timeline/terminal sebelum mencoba ulang.
 
-**How it works:**
+## Keamanan dan privasi
 
-- The process scanner detects running Cursor/Windsurf processes via OS process list. GUI apps bypass the TTY filter since they don't have a terminal attached.
-- The log watcher monitors IDE-specific directories for file activity changes (`mtime` polling).
-- Since IDE agents cannot signal task completion explicitly, a **15-second inactivity timeout** is used — if no file changes are detected within 15s, the agent transitions to idle.
-- Each Cursor session gets a unique agent ID: `log-cursor--{session-hash}`. Windsurf uses a fixed ID: `log-windsurf--activity`.
+URL tunnel **bukan** pengganti autentikasi. API memakai bearer token dan kontrol
+remote harus diaktifkan dari desktop. Prompt dipaste secara literal melalui stdin,
+dengan validasi ukuran UTF-8 dan penolakan terminal control characters.
 
-**Setup:** No configuration needed — just launch Cursor or Windsurf and start using their AI features. OfficeAI will detect them automatically.
+Token memberi akses ke data aktivitas dan kontrol terminal yang didukung.
+Jangan share token, commit konfigurasi pribadi, atau menaruh screenshot token di issue.
+Prompt/respons dapat muncul di timeline lokal; jangan menganggapnya hanya metadata.
 
----
+Quick Tunnel cocok untuk pengujian. Untuk penggunaan internet jangka panjang,
+konfigurasikan Named Tunnel + Cloudflare Access, rate limit, dan recovery sesi
+yang lebih kuat. Integrasi Access/rate-limit production **belum diverifikasi
+sebagai bagian delivery ini**. Menutup tunnel menghentikan akses remote,
+bukan menghentikan agent lokal.
+
+## Performa
+
+- Avatar original tanpa tekstur eksternal, berukuran sekitar **456 KB**.
+- Skeleton/material per karakter; geometry dan animation clips dibagi bersama.
+- Batching geometri statis mengurangi draw call kantor.
+- Render dibatasi 30 FPS; pixel ratio maksimal 1.5 desktop dan 1.25 mobile.
+- Animasi/polling mobile dihentikan saat app di background.
+- Desktop mengimpor Three.js langsung; renderer PixiJS lama tidak ikut jalur utama.
+
+Angka RAM/FPS harus diukur pada perangkat, viewport, jumlah agent, dan power profile
+yang sama. FPS browser headless/software rendering bukan benchmark GPU laptop atau HP.
+Gunakan build release untuk review; ukuran debug APK dan aktivitas compile bukan
+ukuran/performa aplikasi release.
 
 ## Troubleshooting
 
-- **Agent not appearing?** Verify the log root in **Settings > Discovery**. For example, Claude Code logs are usually in `~/.claude/projects/`.
-- **Process not detected?** Some agents run via `node` or `python`. Ensure your `agent_process_patterns` in settings include the correct regex for your environment.
-- **Diagnostic Log:** If you run into issues, go to **Settings > General** and click **Bug Report**. This generates a `diagnostic.json` file for debugging.
+| Gejala | Cek / tindakan |
+| --- | --- |
+| 3D kosong di HP | Rebuild scene → rebuild APK → reinstall. Tombol **Muat ulang 3D** tersedia pada error. |
+| Unauthorized | Salin token dari desktop yang sedang aktif; jangan pakai token instance/tunnel lama. |
+| Cloudflare 530 / 1033 | Connector tunnel tidak tersedia; buka ulang tunnel, salin URL terbaru, pastikan desktop hidup. |
+| Terminal belum terhubung | Gunakan Kitty dengan Unix socket atau tmux; foreground agent harus sama dengan target yang diverifikasi. |
+| Agent sedang copy-mode / background | Keluar dari copy-mode atau kembalikan CLI ke foreground; coba periksa koneksi terminal lagi. |
+| Prompt timeout | Draft dipertahankan. Periksa timeline/terminal dulu agar tidak mengirim task dua kali. |
+| Agent tidak muncul / status tertinggal | Cek Settings → Discovery, log root, versi provider, dan sesi/workspace yang terdeteksi. |
+| Laptop berat | Gunakan release, tutup instance dev/preview yang tidak dipakai, lalu bedakan beban OfficeAI dengan browser/compile. |
+| Flutter tidak ditemukan | Tambahkan `flutter/bin` ke PATH atau gunakan path absolut ke executable Flutter. |
+| Tidak ada device ADB | Pastikan USB debugging, otorisasi RSA, mode USB, kabel data, dan permission udev Linux. |
 
----
+## Development & verification
 
-## Non-Goals
+```bash
+npm run check
+npm test
+cd src-tauri && cargo test --lib && cd ..
+npm run build:mobile-scene
+npm run test:scene
+cd mobile && flutter analyze && flutter test
+```
 
-- The app **never** modifies CLI agent behavior, injects middleware, or requires config changes.
-- No network requests to external servers — all processing is local.
-- This is **not a CLI replacement** — the visualizer is a companion/monitor tool only.
-- Prompt data is **never stored or transmitted** — only metadata is used (state, model name, token counts).
+`test:scene` membuka browser terisolasi untuk memeriksa bundle lokal/offline,
+enam avatar, tap selection, gesture orbit, serta alokasi geometri setelah reconnect.
+Gunakan `OFFICEAI_BROWSER=/path/to/chromium` jika browser Playwright tidak tersedia.
 
----
+Uji transport Kitty sungguhan, **bukan** percakapan AI milik pengguna:
 
-## Roadmap
+```bash
+cd src-tauri
+cargo test --lib kitty_delivers_literal_prompt_only_to_verified_window -- --ignored
+```
 
-- [ ] **ChatGPT CLI Support** — integration with official and community-built CLIs.
-- [x] **Browser Model Tracking** — ChatGPT, Gemini, Claude.ai web sessions tracked via Chrome MV3 extension.
-- [ ] **Office Customization** — changeable floor plans, custom furniture, and skins.
-- [ ] **Collaboration Mode** — visual links/indicators when multiple agents are delegating tasks to each other.
-- [ ] **New Idle Zones** — gym area, library, and outdoor garden for more character variety.
+Tes ini perlu graphical session dan Kitty; membuat dua window temporer dengan
+fake CLI yang tidak menjalankan shell command/panggilan provider, lalu memeriksa
+target, multiline paste, stale PID, dan interrupt.
 
----
+Regenerasi asset:
 
-## Commands
-| Command               | Description                            |
-|-----------------------|----------------------------------------|
-| `make install`        | Install all dependencies (npm + cargo) |
-| `make dev`            | Full Tauri + Vite dev server           |
-| `make build`          | Production build (AppImage/DMG/MSI)    |
-| `make build-debug`    | Debug build (faster, no optimizations) |
-| `make build-frontend` | Build frontend only (to dist/)         |
-| `make test-js`        | TypeScript tests (vitest)              |
-| `make test-rust`      | Rust tests                             |
-| `make test-all`       | All tests (TS + Rust)                  |
-| `make test-watch`     | TypeScript tests in watch mode         |
-| `make bench`          | Run performance benchmarks             |
-| `make check`          | svelte-check + clippy + fmt            |
-| `make lint`           | Svelte type checker only               |
-| `make fmt`            | Format Rust code                       |
-| `make clippy`         | Rust linter (warnings as errors)       |
-| `make assets`         | Regenerate sprites + tiles + effects   |
-| `make icons`          | Generate Tauri app icons               |
-| `make clean`          | Remove dist/ + cargo clean             |
-| `make clean-all`      | Remove artifacts + node_modules        |
+```bash
+npm run generate:avatar
+npm run tauri -- icon images/officeai-mark.svg
+npm run build:mobile-scene
+```
 
----
+Asset generator dan asset GLB disimpan bersama source. Tidak ada dependency model
+berbayar atau model third-party yang perlu diunduh saat aplikasi berjalan.
 
-## Tech Stack
+## Dokumentasi & roadmap
 
-| Layer                  | Technology                               |
-|------------------------|------------------------------------------|
-| **Desktop runtime**    | Tauri v2 (Rust)                          |
-| **Frontend framework** | Svelte 5 (runes)                         |
-| **2D rendering**       | PixiJS v8 (isometric)                    |
-| **Process discovery**  | sysinfo (Rust)                           |
-| **Async runtime**      | Tokio                                    |
-| **IPC**                | Tauri events + commands                  |
-| **Browser extension**  | Chrome MV3 + Native Messaging            |
-| **Config storage**     | TOML (`~/.config/office-ai/config.toml`) |
-| **TS testing**         | Vitest (~411 tests)                      |
-| **Rust testing**       | cargo test (~371 tests)                  |
+- [Upgrade plan, baseline, dan acceptance gates](docs/OFFICE_UPGRADE_PLAN.md)
+- [Remote agent control plan](docs/REMOTE_AGENT_CONTROL_PLAN.md)
+- [Configuration](docs/CONFIGURATION.md)
+- [Browser extension](docs/EXTENSION.md)
+- [Backend](docs/BACKEND.md)
+- [Contributing](CONTRIBUTING.md)
 
----
+Dokumentasi arsitektur lama masih memuat renderer PixiJS; plan upgrade dan README
+ini menjelaskan jalur Three.js/Flutter saat ini. Roadmap berikutnya: signing release,
+uji lebih banyak HP, attach lintas OS/provider, persisted queue, dan hardening remote
+untuk produksi. Fitur ini belum dinyatakan selesai hanya karena ada di roadmap.
 
-## Cross-Platform Support
+## Kredit & hak cipta
 
-| Feature                             | macOS      | Linux           | Windows |
-|-------------------------------------|------------|-----------------|---------|
-| Process scanning                    | Yes        | Yes             | Yes     |
-| Agent log parsing                   | Yes        | Yes             | Yes     |
-| Isometric office rendering          | Yes        | Yes             | Yes     |
-| App icon badge (active agent count) | Yes (Dock) | Yes (Unity/KDE) | No      |
-| Chrome Extension                    | Yes        | Yes             | Planned |
-| Production build                    | DMG        | AppImage        | MSI     |
+**© 2026 nox14** — peningkatan kantor 3D, original rigged avatar, identitas visual,
+dan remote workspace pada fork ini.
 
-The app icon badge shows the number of currently active agents (not idle, not offline) as a numeric indicator on the dock/taskbar icon. When no agents are active, the badge is removed. The badge updates automatically on every agent state change — registration, status transition, and removal.
-
----
-
-## Documentation
-
-| Document                                  | Description                                               |
-|-------------------------------------------|-----------------------------------------------------------|
-| [ARCHITECTURE.md](docs/ARCHITECTURE.md)   | Detailed system architecture, data structures, algorithms |
-| [FRONTEND.md](docs/FRONTEND.md)           | TypeScript frontend — Svelte 5, PixiJS v8, stores, UI     |
-| [BACKEND.md](docs/BACKEND.md)             | Rust backend — process scanner, log parser, IPC           |
-| [CONFIGURATION.md](docs/CONFIGURATION.md) | All settings explained (defaults, behavior)               |
-| [EXTENSION.md](docs/EXTENSION.md)         | Chrome extension — setup, architecture, detection         |
-| [TESTING.md](docs/TESTING.md)             | Test structure, commands, coverage, CI/CD                 |
-| [CHANGELOG.md](CHANGELOG.md)               | Project history, version changes, and release notes       |
-| [CONTRIBUTING.md](CONTRIBUTING.md)        | How to contribute, code style, commit conventions         |
-| [LICENSE](LICENSE)                        | MIT License                                               |
+Dibangun di atas [OfficeAI oleh dykyi-roman](https://github.com/dykyi-roman/office-ai).
+Hak cipta dan lisensi upstream dipertahankan. Kode didistribusikan dengan
+[MIT License](LICENSE); Three.js, Tauri, Svelte, Flutter, dan dependency lainnya
+tetap tunduk pada lisensi masing-masing.

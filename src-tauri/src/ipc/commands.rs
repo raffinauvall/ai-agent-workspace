@@ -2,11 +2,17 @@
 // Exposed to frontend via tauri::Builder::invoke_handler
 
 use crate::discovery::agent_registry::AgentRegistry;
+use crate::activity::SharedActivityStore;
+use crate::managed_sessions::SharedManagedSessions;
+use crate::managed_sessions::{control_capability, dispatch_prompt, ControlCapability, Provider, WorkspaceInfo};
+use crate::activity::ActivityEvent;
 use crate::models::{AgentState, AppConfig, AppStats, BugReport, OsInfo};
 use rand::{rngs::OsRng, RngCore};
 use serde::Serialize;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
+use std::sync::atomic::Ordering;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 use tauri::State;
@@ -34,6 +40,9 @@ pub struct AppState {
     pub config: Arc<RwLock<AppConfig>>,
     pub start_time: Instant,
     pub remote_token: String,
+    pub activities: SharedActivityStore,
+    pub managed_sessions: SharedManagedSessions,
+    pub remote_control_enabled: Arc<AtomicBool>,
     remote_tunnel: Arc<Mutex<Option<RemoteTunnel>>>,
 }
 
@@ -44,9 +53,9 @@ where
     tauri::async_runtime::spawn(async move {
         let mut lines = BufReader::new(output).lines();
         while let Ok(Some(line)) = lines.next_line().await {
-            if tx.send(line).await.is_err() {
-                break;
-            }
+            // Keep draining cloudflared after the URL waiter exits; otherwise
+            // its pipe can fill and stall the connector behind Cloudflare.
+            let _ = tx.send(line).await;
         }
     });
 }
@@ -56,12 +65,17 @@ impl AppState {
         registry: Arc<RwLock<AgentRegistry>>,
         config: Arc<RwLock<AppConfig>>,
         remote_token: String,
+        activities: SharedActivityStore,
+        managed_sessions: SharedManagedSessions,
     ) -> Self {
         Self {
             registry,
             config,
             start_time: Instant::now(),
             remote_token,
+            activities,
+            managed_sessions,
+            remote_control_enabled: Arc::new(AtomicBool::new(false)),
             remote_tunnel: Arc::new(Mutex::new(None)),
         }
     }
@@ -129,6 +143,7 @@ pub async fn start_remote_access(state: State<'_, AppState>) -> Result<RemoteAcc
         return Err("Tunnel tidak mengeluarkan URL dalam 15 detik".to_string());
     };
 
+    state.remote_control_enabled.store(true, Ordering::Relaxed);
     app_log!("REMOTE_API", "tunnel started at {url}");
     *tunnel = Some(RemoteTunnel {
         child,
@@ -152,6 +167,7 @@ pub async fn stop_remote_access(state: State<'_, AppState>) -> Result<(), String
             .map_err(|error| format!("Tunnel gagal dihentikan: {error}"))?;
         app_log!("REMOTE_API", "tunnel stopped");
     }
+    state.remote_control_enabled.store(false, Ordering::Relaxed);
     Ok(())
 }
 
@@ -248,6 +264,55 @@ pub async fn get_stats(state: State<'_, AppState>) -> Result<AppStats, String> {
         total_tokens_out: registry.total_tokens_out(),
         uptime_seconds: uptime,
     })
+}
+
+#[tauri::command]
+pub async fn get_agent_activities(
+    id: String,
+    after: Option<u64>,
+    limit: Option<usize>,
+    state: State<'_, AppState>,
+) -> Result<Vec<ActivityEvent>, String> {
+    if state.registry.read().await.get(&id).is_none() {
+        return Err("Agent tidak ditemukan".to_string());
+    }
+    state.activities.lock().map(|store| store.after(&id, after.unwrap_or(0), limit.unwrap_or(50))).map_err(|_| "Activity store terkunci".to_string())
+}
+
+#[derive(Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteCapabilities {
+    pub remote_control_enabled: bool,
+    pub terminal_controller: bool,
+    pub providers: Vec<String>,
+    pub workspaces: Vec<WorkspaceInfo>,
+}
+
+#[tauri::command]
+pub async fn get_remote_capabilities(state: State<'_, AppState>) -> Result<RemoteCapabilities, String> {
+    let workspaces = state.managed_sessions.lock().map(|sessions| sessions.workspaces()).map_err(|_| "Session manager terkunci".to_string())?;
+    let providers: Vec<String> = ["codex", "claude", "gemini"].into_iter().filter(|name| std::env::var_os("PATH").map(|path| path.to_string_lossy().split(':').map(|dir| PathBuf::from(dir).join(name)).any(|path| path.is_file())).unwrap_or(false)).map(str::to_string).collect();
+    Ok(RemoteCapabilities { remote_control_enabled: state.remote_control_enabled.load(Ordering::Relaxed), terminal_controller: providers.iter().any(|_| true) && std::env::var_os("PATH").map(|path| path.to_string_lossy().split(':').map(|dir| PathBuf::from(dir).join("kitty")).any(|path| path.is_file())).unwrap_or(false), providers, workspaces })
+}
+
+#[tauri::command]
+pub async fn create_managed_agent(provider: String, workspace_id: String, initial_message: Option<String>, state: State<'_, AppState>) -> Result<serde_json::Value, String> {
+    if !state.remote_control_enabled.load(Ordering::Relaxed) { return Err("Remote control belum aktif".to_string()); }
+    let provider = Provider::parse(&provider).ok_or("Provider tidak didukung")?;
+    let session = state.managed_sessions.lock().map_err(|_| "Session manager terkunci".to_string())?.create(provider, &workspace_id, initial_message)?;
+    Ok(serde_json::json!({ "sessionId": session.session_id, "workspaceId": session.workspace_id, "workspaceLabel": session.workspace_label, "state": session.state }))
+}
+
+#[tauri::command]
+pub async fn send_agent_message(id: String, message: String, mode: String, state: State<'_, AppState>) -> Result<(), String> {
+    dispatch_prompt(&state.registry, &state.managed_sessions, &state.activities, &id, message.trim(), &mode).await?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn get_agent_control(id: String, state: State<'_, AppState>) -> Result<ControlCapability, String> {
+    let agent=state.registry.read().await.get(&id).ok_or("Agent tidak ditemukan")?;
+    Ok(control_capability(&agent,&state.managed_sessions).await)
 }
 
 /// Collect OS information for bug reports.
@@ -419,6 +484,7 @@ pub fn persist_config(config: &AppConfig) -> Result<(), String> {
 
 #[cfg(test)]
 mod tests {
+    use crate::models::ControlMode;
     use super::*;
     use crate::discovery::agent_registry::AgentRegistry;
     use crate::models::{IdleLocation, Source, Status, Tier};
@@ -434,6 +500,11 @@ mod tests {
             status,
             idle_location: IdleLocation::Desk,
             current_task: None,
+            current_goal: None,
+            current_activity: None,
+            control_mode: ControlMode::MonitorOnly,
+            workspace_label: None,
+            managed_session_id: None,
             tokens_in,
             tokens_out,
             sub_agents: vec![],

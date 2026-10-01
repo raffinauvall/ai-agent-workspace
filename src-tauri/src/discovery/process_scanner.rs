@@ -1,7 +1,7 @@
 // Process scanner using sysinfo crate
 // Detects Claude Code, Claude CLI, and custom agent processes
 
-use crate::models::{AgentState, AppConfig, IdleLocation, Source, Status, Tier};
+use crate::models::{AgentState, AppConfig, ControlMode, IdleLocation, Source, Status, Tier};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
@@ -292,6 +292,11 @@ pub fn process_to_agent_state(
         status: Status::Idle,
         idle_location: IdleLocation::Desk,
         current_task: None,
+        current_goal: None,
+        current_activity: None,
+        control_mode: ControlMode::MonitorOnly,
+        workspace_label: None,
+        managed_session_id: None,
         tokens_in: 0,
         tokens_out: 0,
         sub_agents: vec![],

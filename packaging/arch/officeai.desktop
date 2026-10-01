@@ -1,0 +1,8 @@
+[Desktop Entry]
+Name=OfficeAI
+Comment=Visualize your AI agents in a virtual office
+Exec=officeai
+Icon=officeai
+Terminal=false
+Type=Application
+Categories=Development;Utility;

@@ -100,6 +100,18 @@ pub enum Source {
 }
 
 #[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
+#[serde(rename_all = "snake_case")]
+pub enum ControlMode {
+    Managed,
+    Attached,
+    MonitorOnly,
+}
+
+impl Default for ControlMode {
+    fn default() -> Self { Self::MonitorOnly }
+}
+
+#[derive(Serialize, Deserialize, Clone, Debug, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct SubAgentInfo {
     pub id: String,
@@ -118,6 +130,12 @@ pub struct AgentState {
     pub status: Status,
     pub idle_location: IdleLocation,
     pub current_task: Option<String>,
+    pub current_goal: Option<String>,
+    pub current_activity: Option<String>,
+    #[serde(default)]
+    pub control_mode: ControlMode,
+    pub workspace_label: Option<String>,
+    pub managed_session_id: Option<String>,
     pub tokens_in: u64,
     pub tokens_out: u64,
     pub sub_agents: Vec<SubAgentInfo>,

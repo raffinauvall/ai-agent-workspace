@@ -2,6 +2,7 @@
 // Shared by all agent parsers — lives in its own module to avoid circular dependencies.
 
 use crate::models::{Status, SubAgentInfo};
+use crate::activity::ActivityInput;
 
 /// Parsed event extracted from a single log line.
 /// All agent parsers produce this common type regardless of log format.
@@ -18,4 +19,5 @@ pub struct ParsedEvent {
     pub timestamp: String,
     /// Working directory from the log entry (used for agent <-> process correlation)
     pub cwd: Option<String>,
+    pub activity: Option<ActivityInput>,
 }

@@ -75,7 +75,7 @@ fn badge_count(active_count: u32) -> Option<i64> {
 mod tests {
     use super::*;
     use crate::models::{
-        AgentFoundPayload, AgentLostPayload, AgentState, IdleLocation, Source, Status, Tier,
+        AgentFoundPayload, AgentLostPayload, AgentState, ControlMode, IdleLocation, Source, Status, Tier,
     };
 
     fn make_agent() -> AgentState {
@@ -89,6 +89,11 @@ mod tests {
             status: Status::Thinking,
             idle_location: IdleLocation::Desk,
             current_task: Some("Fix the bug".to_string()),
+            current_goal: Some("Fix the bug".to_string()),
+            current_activity: Some("Thinking".to_string()),
+            control_mode: ControlMode::MonitorOnly,
+            workspace_label: None,
+            managed_session_id: None,
             tokens_in: 500,
             tokens_out: 200,
             sub_agents: vec![],

@@ -43,11 +43,34 @@ export const TAURI_COMMANDS = {
   GET_CONFIG: "get_config",
   SET_CONFIG: "set_config",
   GET_STATS: "get_stats",
+  GET_AGENT_ACTIVITIES: "get_agent_activities",
+  GET_REMOTE_CAPABILITIES: "get_remote_capabilities",
+  CREATE_MANAGED_AGENT: "create_managed_agent",
+  SEND_AGENT_MESSAGE: "send_agent_message",
   GET_REMOTE_ACCESS: "get_remote_access",
   START_REMOTE_ACCESS: "start_remote_access",
   STOP_REMOTE_ACCESS: "stop_remote_access",
   GENERATE_BUG_REPORT: "generate_bug_report",
 } as const;
+
+export type ActivityKind =
+  | "prompt"
+  | "reasoning"
+  | "tool_start"
+  | "tool_result"
+  | "response"
+  | "status"
+  | "error";
+
+export interface ActivityEvent {
+  sequence: number;
+  agentId: string;
+  timestamp: string;
+  kind: ActivityKind;
+  title: string;
+  detail: string | null;
+  status: import("./agent").Status;
+}
 
 export interface RemoteAccessInfo {
   running: boolean;

@@ -1,5 +1,5 @@
 <script lang="ts">
-  import type { Status } from "$lib/types/index";
+  import type { ActivityEvent, Status } from "$lib/types/index";
   import {
     getSelectedAgent,
     isSidebarOpen,
@@ -16,6 +16,7 @@
   } from "./utils";
   import { t } from "$lib/i18n/index";
   import MiniLog from "./MiniLog.svelte";
+  import type { ControlCapability } from "$lib/types/agent";
 
   // Log entry type for mini log
   interface LogEntry {
@@ -31,6 +32,12 @@
   let logHistory = $state<LogEntry[]>([]);
   let lastAgentId = $state<string | null>(null);
   let lastStatus = $state<Status | null>(null);
+  let activities = $state<ActivityEvent[]>([]);
+  let activityError = $state("");
+  let message = $state("");
+  let sending = $state(false);
+  let control = $state<ControlCapability | null>(null);
+  let receipt = $state("");
 
   // Track status changes to build mini log
   $effect(() => {
@@ -64,6 +71,58 @@
       lastStatus = currentAgent.status;
     }
   });
+
+  $effect(() => {
+    const id = agent?.id;
+    if (!id) return;
+    activities = [];
+    activityError = "";
+    control = null;
+    message = "";
+    receipt = "";
+    let cancelled = false;
+    let loading = false;
+    const refresh = async () => {
+      if (loading) return;
+      loading = true;
+      try {
+        const { invoke } = await import("@tauri-apps/api/core");
+        const [events, capability] = await Promise.all([
+          invoke<ActivityEvent[]>("get_agent_activities", { id, after: 0, limit: 50 }),
+          invoke<ControlCapability>("get_agent_control", { id }),
+        ]);
+        if (!cancelled) { activities = events; control = capability; }
+      } catch (error) {
+        if (!cancelled) activityError = String(error);
+      } finally {
+        loading = false;
+      }
+    };
+    void refresh();
+    const timer = setInterval(() => { if (!document.hidden) void refresh(); }, 2500);
+    return () => { cancelled = true; clearInterval(timer); };
+  });
+
+  async function sendInstruction(mode: "now" | "queue" | "interrupt"): Promise<void> {
+    if (!agent || !control?.canSend || !message.trim() || sending) return;
+    const target = agent.id;
+    if (mode === "interrupt" && !window.confirm("Interrupt task agent ini dan kirim prompt baru?")) return;
+    sending = true;
+    activityError = "";
+    try {
+      const { invoke } = await import("@tauri-apps/api/core");
+      await invoke("send_agent_message", { id: target, message: message.trim(), mode });
+      if (agent?.id === target) {
+        message = "";
+        receipt = mode === "queue" && agent.status !== "idle" && agent.status !== "task_complete"
+          ? "Antrean tersimpan. Menunggu task selesai." : "Dikirim ke terminal. Tunggu aktivitas agent.";
+      }
+    } catch (error) {
+      activityError = error instanceof Error ? error.message : String(error);
+    } finally {
+      sending = false;
+    }
+  }
 
   // Live session duration counter (from startedAt)
   let sessionSec = $state(0);
@@ -160,8 +219,14 @@
     <section class="detail-section" aria-label={t("sidebar.currentTask")}>
       <div class="detail-label">{t("sidebar.currentTask")}</div>
       <div class="detail-value task-text">
-        {agent.currentTask ? truncate(agent.currentTask, 120) : t("sidebar.idle")}
+        {agent.currentGoal ?? agent.currentTask ? truncate(agent.currentGoal ?? agent.currentTask ?? "", 120) : t("sidebar.idle")}
       </div>
+    </section>
+
+    <section class="detail-section">
+      <div class="detail-label">Now</div>
+      <div class="detail-value task-text">{agent.currentActivity ?? statusLabel(agent.status)}</div>
+      {#if agent.workspaceLabel}<div class="detail-label workspace-label">Workspace · {agent.workspaceLabel}</div>{/if}
     </section>
 
     <!-- Tokens row -->
@@ -221,8 +286,36 @@
     <!-- Mini log -->
     <section class="log-section" aria-label={t("sidebar.recentActivity")}>
       <div class="section-title">{t("sidebar.recentActivity")}</div>
-      <MiniLog entries={logHistory} />
+      {#if activities.length > 0}
+        <div class="activity-list">
+          {#each activities.slice(-8).reverse() as event}
+            <div class="activity-item">
+              <span class="activity-kind">{event.kind.replace("_", " ")}</span>
+              <span class="activity-title">{event.title}</span>
+              {#if event.detail}<span class="activity-detail">{truncate(event.detail, 100)}</span>{/if}
+            </div>
+          {/each}
+        </div>
+      {:else}
+        <MiniLog entries={logHistory} />
+      {/if}
+      {#if activityError}<p class="activity-error">{activityError}</p>{/if}
     </section>
+
+    {#if control?.canSend}
+      <section class="composer" aria-label="Send instruction">
+        <p class="control-note">{control.transport} · target terminal terverifikasi{control.queued ? " · 1 antrean" : ""}</p>
+        {#if receipt}<p class="receipt" role="status">{receipt}</p>{/if}
+        <textarea bind:value={message} maxlength="4000" aria-label="Prompt untuk agent" placeholder="Instruksi untuk agent ini…" rows="3"></textarea>
+        <div class="composer-actions">
+          <button disabled={sending || !message.trim() || !["idle", "task_complete"].includes(agent.status)} onclick={() => sendInstruction("now")}>Send</button>
+          <button disabled={sending || !message.trim() || control.queued} onclick={() => sendInstruction("queue")}>Queue</button>
+          <button class="danger" disabled={sending || !message.trim()} onclick={() => sendInstruction("interrupt")}>Interrupt</button>
+        </div>
+      </section>
+    {:else}
+      <div class="control-note composer">{control?.reason ?? "Memeriksa koneksi terminal…"}</div>
+    {/if}
 
   </aside>
 {/if}
@@ -244,6 +337,22 @@
     overflow: hidden;
     animation: slide-in 200ms ease forwards;
   }
+
+  .workspace-label { margin-top: 6px; }
+  .activity-list { display: grid; gap: 7px; max-height: 180px; overflow: auto; }
+  .activity-item { display: grid; grid-template-columns: auto 1fr; gap: 3px 7px; font-size: 11px; }
+  .activity-kind { color: var(--color-accent, #e9b949); text-transform: capitalize; }
+  .activity-title { color: var(--color-text-primary); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .activity-detail { grid-column: 2; color: var(--color-text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .activity-error, .control-note { color: var(--color-text-muted); font-size: 11px; }
+  .receipt { color: #60d394; font-size: 11px; }
+  .composer { padding: 12px 16px 16px; border-top: 1px solid var(--color-border); }
+  .composer textarea { width: 100%; resize: vertical; box-sizing: border-box; background: var(--color-bg-input); color: var(--color-text-primary); border: 1px solid var(--color-border); border-radius: 8px; padding: 8px; font: inherit; }
+  .composer-actions { display: flex; gap: 6px; margin-top: 8px; }
+  .composer-actions button { min-height: 32px; border: 1px solid var(--color-border); border-radius: 6px; background: var(--color-bg-input); color: var(--color-text-primary); cursor: pointer; padding: 0 9px; }
+  .composer-actions button:first-child { background: var(--color-accent, #e9b949); color: #16131a; }
+  .composer-actions .danger { color: #ff9b9b; }
+  .composer-actions button:disabled { opacity: .5; cursor: not-allowed; }
 
   @keyframes slide-in {
     from {

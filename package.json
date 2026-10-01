@@ -6,6 +6,7 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:mobile-scene": "vite build --config vite.mobile.config.ts",
     "preview": "vite preview",
     "check": "svelte-check --tsconfig ./tsconfig.json",
     "tauri": "tauri",
@@ -14,7 +15,9 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:e2e": "playwright test",
+    "test:scene": "node scripts/check-office-scene.mjs",
     "generate:sprites": "npx tsx scripts/generate-sprites.ts",
+    "generate:avatar": "node scripts/generate-avatar.mjs",
     "generate:tiles": "npx tsx scripts/generate-tiles.ts",
     "generate:all": "npm run generate:sprites && npm run generate:tiles"
   },
@@ -22,8 +25,8 @@
     "@tauri-apps/api": "^2.10.1",
     "@tauri-apps/cli": "^2.10.0",
     "@tauri-apps/plugin-shell": "^2.3.5",
-    "pixi.js": "^8.16.0",
-    "svelte": "^5.53.5",
+    "pixi.js": "^8.21.0",
+    "svelte": "^5.57.1",
     "three": "^0.186.1"
   },
   "devDependencies": {

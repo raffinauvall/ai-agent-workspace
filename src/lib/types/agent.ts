@@ -26,6 +26,17 @@ export type IdleLocation =
 
 export type Source = "cli" | "browser_extension" | "sdk_hook" | "ide";
 
+export type ControlMode = "managed" | "attached" | "monitor_only";
+
+export interface ControlCapability {
+  canSend: boolean;
+  reason: string | null;
+  transport: string | null;
+  controlMode: "managed" | "attached" | "attach_required";
+  queued: boolean;
+  sendModes: ("now" | "queue" | "interrupt")[];
+}
+
 export interface SubAgentInfo {
   id: string;
   description: string;
@@ -41,6 +52,11 @@ export interface AgentState {
   status: Status;
   idleLocation: IdleLocation;
   currentTask: string | null;
+  currentGoal?: string | null;
+  currentActivity?: string | null;
+  controlMode?: ControlMode;
+  workspaceLabel?: string | null;
+  managedSessionId?: string | null;
   tokensIn: number;
   tokensOut: number;
   subAgents: SubAgentInfo[];

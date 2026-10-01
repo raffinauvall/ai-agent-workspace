@@ -1,0 +1,18 @@
+pkgname=officeai
+pkgver=0.1.0
+pkgrel=2
+pkgdesc='Visualize and control AI agents in an isometric office'
+arch=('x86_64')
+url='https://github.com/raffinauvall/ai-agent-workspace'
+license=('MIT')
+depends=('gtk3' 'webkit2gtk-4.1')
+source=('officeai.desktop')
+sha256sums=('SKIP')
+
+package() {
+  local root="$startdir/../.."
+  install -Dm755 "$root/src-tauri/target/release/OfficeAI" "$pkgdir/usr/bin/officeai"
+  install -Dm644 "$srcdir/officeai.desktop" "$pkgdir/usr/share/applications/officeai.desktop"
+  install -Dm644 "$root/src-tauri/icons/128x128.png" "$pkgdir/usr/share/icons/hicolor/128x128/apps/officeai.png"
+  install -Dm644 "$root/LICENSE" "$pkgdir/usr/share/licenses/officeai/LICENSE"
+}

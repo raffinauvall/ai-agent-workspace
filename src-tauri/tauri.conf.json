@@ -35,7 +35,7 @@
     ],
     "category": "DeveloperTool",
     "shortDescription": "AI agents visualized as office employees",
-    "longDescription": "OfficeAI is a desktop app that renders a 2D isometric office where each running AI agent (Claude Code, Gemini CLI, ChatGPT, etc.) appears as an animated employee. Zero-intrusion: passively observes agent processes without modifying them.",
+    "longDescription": "OfficeAI by nox14 turns AI agent activity into a modern 3D office with animated streetwear characters. View the same workspace on Android and send instructions to verified Kitty or tmux CLI sessions.",
     "macOS": {
       "minimumSystemVersion": "10.15",
       "dmg": {

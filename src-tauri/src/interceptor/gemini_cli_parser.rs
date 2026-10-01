@@ -249,6 +249,7 @@ fn parse_gemini_message(line: &str) -> Option<ParsedEvent> {
         completed_sub_agent_ids: vec![],
         timestamp,
         cwd: None,
+        activity: None,
     })
 }
 

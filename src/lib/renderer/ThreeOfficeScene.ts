@@ -1,5 +1,9 @@
 import * as THREE from "three";
 import { OrbitControls } from "three/examples/jsm/controls/OrbitControls.js";
+import { mergeGeometries } from "three/examples/jsm/utils/BufferGeometryUtils.js";
+import type { GLTF } from "three/examples/jsm/loaders/GLTFLoader.js";
+import { GenZAvatar, loadAvatar, avatarStyle, type AvatarStyle, type AvatarPose } from "./GenZAvatar";
+import { OfficeNavigation } from "./OfficeNavigation";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 
 import type { AgentState, Status } from "$lib/types/agent";
@@ -40,13 +44,6 @@ const STATUS_LABELS: Record<Status, string> = {
   task_complete: "Task complete",
   error: "Error",
   offline: "Offline",
-};
-
-const TIER_COLORS: Record<AgentState["tier"], number> = {
-  expert: 0xfbbf24,
-  senior: 0x60a5fa,
-  middle: 0x34d399,
-  junior: 0xf472b6,
 };
 
 const DESK_POSITIONS = [
@@ -93,6 +90,8 @@ const IDLE_ACTIVITIES = [
 ];
 
 interface AgentVisual {
+  avatar: GenZAvatar | null;
+  hitBox: THREE.Mesh;
   state: AgentState;
   group: THREE.Group;
   body: THREE.Mesh;
@@ -110,11 +109,18 @@ interface AgentVisual {
   cigarette: THREE.Mesh;
   smoke: [THREE.Mesh, THREE.Mesh];
   target: THREE.Vector3;
+  path: THREE.Vector3[];
+  walkSpeed: number;
   idleActivity: string;
   idleTargetIndex: number;
   nextIdleMove: number;
   phase: number;
   selected: boolean;
+}
+
+export interface ExternalSceneOptions {
+  externalData?: boolean;
+  onAgentSelected?: (agentId: string) => void;
 }
 
 function material(color: number, roughness = 0.75): THREE.MeshStandardMaterial {
@@ -272,20 +278,131 @@ function addDesk(parent: THREE.Object3D, position: THREE.Vector3): void {
   const group = new THREE.Group();
   group.position.copy(position);
   parent.add(group);
-  box([1.65, 0.12, 0.85], 0x70452d, [0, 1.0, 0], group);
-  box([0.08, 1.0, 0.08], 0x3e2a22, [-0.67, 0.5, -0.28], group);
-  box([0.08, 1.0, 0.08], 0x3e2a22, [0.67, 0.5, -0.28], group);
-  box([0.08, 1.0, 0.08], 0x3e2a22, [-0.67, 0.5, 0.28], group);
-  box([0.08, 1.0, 0.08], 0x3e2a22, [0.67, 0.5, 0.28], group);
-  box([0.72, 0.52, 0.06], 0x192536, [0, 1.32, -0.18], group);
-  box([0.6, 0.38, 0.025], 0x2e8bc6, [0, 1.32, -0.215], group);
-  box([0.25, 0.035, 0.38], 0xe4d6b5, [0, 1.09, 0.18], group);
-  box([0.7, 0.08, 0.42], 0x46342c, [0, 0.52, 0.2], group);
-  const chair = new THREE.Mesh(new THREE.BoxGeometry(0.62, 0.12, 0.62), material(0x26364b));
-  chair.position.set(0, 0.55, 0.93);
-  chair.castShadow = true;
+  const top = box([1.85, 0.1, 0.92], 0xd8dee7, [0, 1.0, 0], group);
+  top.material.roughness = 0.42;
+  box([1.85, 0.07, 0.06], 0x9aa7b7, [0, 0.94, 0.43], group);
+  for (const x of [-0.76, 0.76]) {
+    box([0.1, 0.9, 0.1], 0x202938, [x, 0.5, -0.29], group);
+    box([0.1, 0.9, 0.1], 0x202938, [x, 0.5, 0.29], group);
+  }
+  box([1.45, 0.06, 0.08], 0x303b4d, [0, 0.57, 0], group);
+  box([0.34, 0.46, 0.52], 0xc2cad5, [-0.58, 0.69, 0.08], group);
+  box([0.25, 0.025, 0.025], 0x566579, [-0.58, 0.78, -0.19], group);
+
+  box([0.94, 0.48, 0.06], 0x172236, [0, 1.34, -0.2], group);
+  const monitorScreen = box([0.84, 0.38, 0.025], 0x12345a, [0, 1.34, -0.235], group);
+  monitorScreen.material.emissive = new THREE.Color(0x0d4e7c);
+  monitorScreen.material.emissiveIntensity = 0.65;
+  box([0.08, 0.26, 0.08], 0x303b4d, [0, 1.08, -0.2], group);
+  box([0.4, 0.035, 0.2], 0x303b4d, [0, 1.04, -0.2], group);
+  box([0.26, 0.035, 0.38], 0xf4f1ea, [0.48, 1.08, 0.16], group);
+
+  const chair = new THREE.Group();
+  chair.position.set(0, 0, 0.96);
   group.add(chair);
-  box([0.08, 0.65, 0.08], 0x35465c, [0, 0.25, 0.93], group);
+  box([0.68, 0.12, 0.58], 0x26364b, [0, 0.55, 0], chair);
+  box([0.56, 0.08, 0.46], 0x35465c, [0, 0.63, -0.01], chair);
+  box([0.68, 0.72, 0.1], 0x1d2b40, [0, 0.94, 0.25], chair);
+  box([0.08, 0.46, 0.08], 0x50627a, [-0.39, 0.78, 0.08], chair);
+  box([0.08, 0.46, 0.08], 0x50627a, [0.39, 0.78, 0.08], chair);
+  box([0.12, 0.43, 0.12], 0x303b4d, [0, 0.31, 0], chair);
+  const chairBase = new THREE.Mesh(new THREE.CylinderGeometry(0.31, 0.38, 0.06, 8), material(0x202938));
+  chairBase.position.y = 0.08;
+  chairBase.castShadow = true;
+  chair.add(chairBase);
+}
+
+function addAvatarFashion(body: THREE.Mesh, head: THREE.Mesh, style: AvatarStyle): void {
+  (body.material as THREE.MeshStandardMaterial).color.setHex(style.outfit);
+  (head.material as THREE.MeshStandardMaterial).color.setHex(style.skin);
+
+  const hair = material(style.hair, 0.55);
+  const accent = material(style.accent, 0.42);
+  const addHead = (mesh: THREE.Mesh): void => {
+    mesh.castShadow = true;
+    head.add(mesh);
+  };
+
+  // Every style gets a readable silhouette first, then one recognizable accessory.
+  switch (style.style) {
+    case "hoodie": {
+      const hood = new THREE.Mesh(new THREE.TorusGeometry(0.29, 0.075, 6, 14), accent);
+      hood.position.set(0, -0.03, 0.03);
+      hood.scale.y = 1.12;
+      body.add(hood);
+      for (const x of [-0.07, 0.07]) {
+        const drawstring = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.2, 5), material(0xe2e8f0));
+        drawstring.position.set(x, 0.22, -0.23);
+        drawstring.rotation.z = x < 0 ? -0.12 : 0.12;
+        body.add(drawstring);
+      }
+      break;
+    }
+    case "cap": {
+      const crown = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.28, 0.14, 8), accent);
+      crown.position.set(0, 0.23, 0.02);
+      addHead(crown);
+      const brim = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.035, 0.16), accent);
+      brim.position.set(0, 0.18, -0.25);
+      addHead(brim);
+      break;
+    }
+    case "beanie": {
+      const hat = new THREE.Mesh(new THREE.SphereGeometry(0.31, 10, 7), accent);
+      hat.scale.y = 0.62;
+      hat.position.y = 0.18;
+      addHead(hat);
+      break;
+    }
+    case "headphones": {
+      const band = new THREE.Mesh(new THREE.TorusGeometry(0.31, 0.035, 6, 16), accent);
+      band.scale.y = 1.12;
+      band.position.z = 0.01;
+      addHead(band);
+      for (const x of [-0.3, 0.3]) {
+        const earCup = new THREE.Mesh(new THREE.CylinderGeometry(0.075, 0.075, 0.08, 8), accent);
+        earCup.rotation.z = Math.PI / 2;
+        earCup.position.set(x, -0.01, 0);
+        addHead(earCup);
+      }
+      break;
+    }
+    case "streetwear": {
+      const hairCap = new THREE.Mesh(new THREE.SphereGeometry(0.3, 8, 6), hair);
+      hairCap.scale.set(1.05, 0.46, 1.05);
+      hairCap.position.set(0, 0.16, 0.03);
+      addHead(hairCap);
+      const chain = new THREE.Mesh(new THREE.TorusGeometry(0.15, 0.018, 5, 12), accent);
+      chain.position.set(0, 0.02, -0.29);
+      chain.rotation.x = Math.PI / 2;
+      body.add(chain);
+      break;
+    }
+    case "tech_freak": {
+      const messyHair = new THREE.Mesh(new THREE.ConeGeometry(0.34, 0.28, 7), hair);
+      messyHair.position.y = 0.2;
+      messyHair.rotation.z = -0.16;
+      addHead(messyHair);
+      for (const x of [-0.105, 0.105]) {
+        const lens = new THREE.Mesh(new THREE.TorusGeometry(0.085, 0.018, 6, 12), accent);
+        lens.position.set(x, 0.01, -0.27);
+        addHead(lens);
+      }
+      const bridge = new THREE.Mesh(new THREE.BoxGeometry(0.1, 0.018, 0.018), accent);
+      bridge.position.set(0, 0.01, -0.27);
+      addHead(bridge);
+      const lanyard = new THREE.Mesh(new THREE.BoxGeometry(0.06, 0.32, 0.025), accent);
+      lanyard.position.set(0, 0.15, -0.25);
+      body.add(lanyard);
+      break;
+    }
+  }
+
+  // A small hoodie-like collar keeps the silhouette young even when accessories are occluded.
+  const collar = new THREE.Mesh(new THREE.TorusGeometry(0.16, 0.035, 5, 10), accent);
+  collar.rotation.x = Math.PI / 2;
+  collar.position.set(0, 0.22, -0.06);
+  body.add(collar);
 }
 
 function addMeetingArea(parent: THREE.Object3D): void {
@@ -632,6 +749,35 @@ function disposeObject(root: THREE.Object3D): void {
   });
 }
 
+function batchOfficeGeometry(root: THREE.Group): void {
+  root.updateMatrixWorld(true);
+  const batches = new Map<string, THREE.Mesh<THREE.BufferGeometry, THREE.MeshStandardMaterial>[]>();
+  root.traverse(object => {
+    if (!(object instanceof THREE.Mesh) || !(object.material instanceof THREE.MeshStandardMaterial)) return;
+    const m = object.material;
+    if (m.transparent || m.map || !object.visible || object.children.length > 0) return;
+    const key = [m.color.getHex(), m.roughness, m.metalness, m.emissive.getHex(), m.emissiveIntensity, m.side, object.castShadow, object.receiveShadow].join(":");
+    const list = batches.get(key) ?? [];
+    list.push(object); batches.set(key, list);
+  });
+  for (const meshes of batches.values()) {
+    if (meshes.length < 2) continue;
+    const geometries = meshes.map(mesh => {
+      const geometry = mesh.geometry.index ? mesh.geometry.toNonIndexed() : mesh.geometry.clone();
+      geometry.applyMatrix4(mesh.matrixWorld);
+      return geometry;
+    });
+    const merged = mergeGeometries(geometries);
+    geometries.forEach(g => g.dispose());
+    if (!merged) continue;
+    const material = meshes[0].material.clone();
+    const batch = new THREE.Mesh(merged, material);
+    batch.castShadow = meshes[0].castShadow; batch.receiveShadow = meshes[0].receiveShadow;
+    for (const mesh of meshes) { mesh.removeFromParent(); mesh.geometry.dispose(); mesh.material.dispose(); }
+    root.add(batch);
+  }
+}
+
 export class ThreeOfficeScene {
   private container: HTMLElement | null = null;
   private renderer: THREE.WebGLRenderer | null = null;
@@ -640,16 +786,33 @@ export class ThreeOfficeScene {
   private scene: THREE.Scene | null = null;
   private resizeObserver: ResizeObserver | null = null;
   private animationFrame = 0;
-  private readonly clock = new THREE.Clock();
+  private lastFrameTime = 0;
+  private elapsed = 0;
+  private lastTick = 0;
+  private hasRendered = false;
   private readonly agents = new Map<string, AgentVisual>();
   private readonly unlisteners: UnlistenFn[] = [];
   private readonly raycaster = new THREE.Raycaster();
   private readonly pointer = new THREE.Vector2();
   private selectedAgentId: string | null = null;
   private world: THREE.Group | null = null;
+  private externalDataMode = false;
+  private onExternalAgentSelected: ((agentId: string) => void) | null = null;
+  private avatarTemplate: GLTF | null = null;
+  private avatarError: string | null = null;
+  private navigation: OfficeNavigation | null = null;
+  private gestureStart: {x: number; y: number} | null = null;
+  private gestureMoved = false;
+  private pointers = new Set<number>();
+  private paused = false;
+  private frames = 0;
+  private fps = 0;
+  private metricsTime = 0;
 
-  async init(container: HTMLElement): Promise<void> {
+  async init(container: HTMLElement, options: ExternalSceneOptions = {}): Promise<void> {
     this.container = container;
+    this.externalDataMode = options.externalData === true;
+    this.onExternalAgentSelected = options.onAgentSelected ?? null;
     this.scene = new THREE.Scene();
     this.scene.background = new THREE.Color(0x789cbd);
     this.scene.fog = new THREE.Fog(0x789cbd, 26, 44);
@@ -661,11 +824,11 @@ export class ThreeOfficeScene {
     this.camera.zoom = 0.9;
     this.camera.updateProjectionMatrix();
 
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "high-performance" });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    this.renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, powerPreference: "low-power" });
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, options.externalData ? 1.25 : 1.5));
     this.renderer.setSize(container.clientWidth, container.clientHeight);
     this.renderer.shadowMap.enabled = true;
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    this.renderer.shadowMap.type = THREE.PCFShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.15;
@@ -683,17 +846,33 @@ export class ThreeOfficeScene {
 
     this.addLights();
     this.buildOffice();
+    this.renderer.domElement.addEventListener("pointerdown", this.onPointerDown);
+    this.renderer.domElement.addEventListener("pointermove", this.onPointerMove);
+    this.renderer.domElement.addEventListener("pointercancel", this.onPointerCancel);
     this.renderer.domElement.addEventListener("pointerup", this.onPointerUp);
     this.resizeObserver = new ResizeObserver(() => this.resize());
     this.resizeObserver.observe(container);
+    this.resize();
+    try { this.avatarTemplate = await loadAvatar(); }
+    catch (error) { this.avatarError = String(error); console.warn("Avatar fallback:", error); }
 
-    try {
-      await this.subscribeToEvents();
-    } catch {
-      // Browser preview has no Tauri event bus; the store fallback still works.
+    if (!this.externalDataMode) {
+      try {
+        await this.subscribeToEvents();
+      } catch {
+        // Browser preview has no Tauri event bus; the store fallback still works.
+      }
+      await this.loadExistingAgents();
     }
-    await this.loadExistingAgents();
-    this.animate();
+    this.animationFrame = requestAnimationFrame(this.animate);
+  }
+
+  syncAgents(states: AgentState[]): void {
+    const ids = new Set(states.map((state) => state.id));
+    for (const state of states) this.upsertAgent(state);
+    for (const id of this.agents.keys()) {
+      if (!ids.has(id)) this.removeAgent(id);
+    }
   }
 
   destroy(): void {
@@ -702,8 +881,12 @@ export class ThreeOfficeScene {
     this.resizeObserver?.disconnect();
     this.resizeObserver = null;
     cancelAnimationFrame(this.animationFrame);
+    this.renderer?.domElement.removeEventListener("pointerdown", this.onPointerDown);
+    this.renderer?.domElement.removeEventListener("pointermove", this.onPointerMove);
+    this.renderer?.domElement.removeEventListener("pointercancel", this.onPointerCancel);
     this.renderer?.domElement.removeEventListener("pointerup", this.onPointerUp);
     this.controls?.dispose();
+    for (const visual of this.agents.values()) visual.avatar?.dispose();
     if (this.scene !== null) disposeObject(this.scene);
     this.agents.clear();
     this.renderer?.dispose();
@@ -715,6 +898,42 @@ export class ThreeOfficeScene {
     this.world = null;
     this.container = null;
     this.selectedAgentId = null;
+    this.externalDataMode = false;
+    this.onExternalAgentSelected = null;
+  }
+
+  setPaused(paused: boolean): void { this.paused = paused; }
+
+  resetCamera(): void {
+    this.camera?.position.set(15, 13, 15);
+    this.controls?.target.set(0, .2, 0);
+    if (this.camera) { this.camera.zoom = .9; this.camera.updateProjectionMatrix(); }
+    this.controls?.update();
+  }
+
+  focusAgent(id: string): void {
+    const visual = this.agents.get(id);
+    if (!visual || !this.camera || !this.controls) return;
+    const target = visual.group.position.clone().add(new THREE.Vector3(0, .75, 0));
+    this.camera.position.add(target.clone().sub(this.controls.target));
+    this.controls.target.copy(target);
+    this.camera.zoom = 2.4;
+    this.camera.updateProjectionMatrix();
+    this.controls.update();
+    this.selectAgent(id);
+  }
+
+  getDiagnostics() {
+    return {fps: this.fps, agents: this.agents.size, riggedAvatars: [...this.agents.values()].filter(a => a.avatar).length,
+      avatarError: this.avatarError, drawCalls: this.renderer?.info.render.calls ?? 0,
+      triangles: this.renderer?.info.render.triangles ?? 0, geometries: this.renderer?.info.memory.geometries ?? 0,
+      targets: [...this.agents.values()].map(visual => {
+        const point = visual.group.position.clone().add(new THREE.Vector3(0, .9, 0));
+        if (this.camera) point.project(this.camera);
+        const bounds = this.renderer?.domElement.getBoundingClientRect();
+        return {id: visual.state.id, position: visual.group.position.toArray(), destination: visual.target.toArray(), moving: visual.path.length > 0,
+          x: (point.x + 1) / 2 * (bounds?.width ?? 0), y: (1 - point.y) / 2 * (bounds?.height ?? 0)};
+      })};
   }
 
   selectAgent(id: string | null): void {
@@ -739,7 +958,7 @@ export class ThreeOfficeScene {
     const key = new THREE.DirectionalLight(0xffe6c2, 3.2);
     key.position.set(-5, 14, 7);
     key.castShadow = true;
-    key.shadow.mapSize.set(2048, 2048);
+    key.shadow.mapSize.set(1024, 1024);
     key.shadow.camera.left = -14;
     key.shadow.camera.right = 14;
     key.shadow.camera.top = 14;
@@ -759,7 +978,7 @@ export class ThreeOfficeScene {
     addClouds(world);
 
     box([22.4, 0.3, 15.4], 0x182235, [0, -0.25, 0], world);
-    box([22, 0.08, 15], 0x9b6746, [0, -0.04, 0], world);
+    box([22, 0.08, 15], 0x8f9aa6, [0, -0.04, 0], world);
     box([22, 3.8, 0.25], 0x6f7480, [0, 1.8, -7.5], world);
     box([0.25, 3.8, 15], 0x6f7480, [-11, 1.8, 0], world);
     box([22, 0.18, 0.35], 0x3c4350, [0, 3.65, -7.32], world);
@@ -777,6 +996,8 @@ export class ThreeOfficeScene {
     addLamp(world, -8.4, -6.3);
     addLamp(world, 8.4, -6.3);
     this.addWallDisplay(world);
+    this.navigation = new OfficeNavigation(world);
+    batchOfficeGeometry(world);
   }
 
   private addWallDisplay(parent: THREE.Object3D): void {
@@ -822,34 +1043,31 @@ export class ThreeOfficeScene {
     const existing = this.agents.get(state.id);
     if (existing !== undefined) {
       const statusChanged = existing.state.status !== state.status;
+      const nameChanged = existing.state.name !== state.name;
       existing.state = state;
       if (statusChanged || state.status !== "idle") {
-        existing.target.copy(this.positionFor(state));
+        const target = this.navigation?.resolve(this.positionFor(state)) ?? this.positionFor(state);
+        if (!target.equals(existing.target)) this.setDestination(existing, target);
       }
       if (statusChanged && state.status === "idle") {
-        existing.idleTargetIndex = this.agents.size % IDLE_POSITIONS.length;
-        existing.nextIdleMove = 5 + Math.random() * 4;
+        existing.idleTargetIndex = Math.max(0, [...this.agents.keys()].indexOf(state.id)) % IDLE_POSITIONS.length;
+        existing.idleActivity = IDLE_ACTIVITIES[existing.idleTargetIndex];
+        existing.nextIdleMove = this.elapsed + 5 + Math.random() * 4;
       }
-      refreshLabel(existing.label, state, existing.idleActivity);
+      if (statusChanged || nameChanged) refreshLabel(existing.label, state, existing.idleActivity);
       const monitorMaterial = existing.monitor.material as THREE.MeshStandardMaterial;
       monitorMaterial.color.setHex(STATUS_COLORS[state.status]);
       monitorMaterial.emissive.setHex(STATUS_COLORS[state.status]);
-      const previousMaterial = existing.ring.material as THREE.Material;
-      existing.ring.material = new THREE.MeshBasicMaterial({
-        color: STATUS_COLORS[state.status],
-        transparent: true,
-        opacity: 0.72,
-        side: THREE.DoubleSide,
-      });
-      previousMaterial.dispose();
+      (existing.ring.material as THREE.MeshBasicMaterial).color.setHex(STATUS_COLORS[state.status]);
       return;
     }
 
     const group = new THREE.Group();
-    const body = new THREE.Mesh(new THREE.CylinderGeometry(0.27, 0.34, 0.5, 6), material(0x172236));
+    const style = avatarStyle(state.id);
+    const body = new THREE.Mesh(new THREE.CapsuleGeometry(0.28, 0.38, 4, 8), material(style.outfit));
     body.position.y = 0.68;
     body.castShadow = true;
-    const head = new THREE.Mesh(new THREE.IcosahedronGeometry(0.29, 1), material(0x0d1626, 0.5));
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.3, 12, 8), material(style.skin, 0.6));
     head.position.y = 1.38;
     head.castShadow = true;
     const visorMaterial = new THREE.MeshStandardMaterial({
@@ -866,8 +1084,8 @@ export class ThreeOfficeScene {
     const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.2, 6), material(0x50627a));
     antenna.position.set(0, 1.72, 0);
     const antennaLight = new THREE.Mesh(
-      new THREE.SphereGeometry(0.065, 8, 6),
-      new THREE.MeshStandardMaterial({ color: TIER_COLORS[state.tier], emissive: TIER_COLORS[state.tier], emissiveIntensity: 1.6 }),
+      new THREE.SphereGeometry(0.055, 8, 6),
+      new THREE.MeshStandardMaterial({ color: style.accent, emissive: style.accent, emissiveIntensity: 1.6 }),
     );
     antennaLight.position.set(0, 1.84, 0);
     const arms: [THREE.Mesh, THREE.Mesh] = [
@@ -911,6 +1129,7 @@ export class ThreeOfficeScene {
       }),
     );
     monitor.position.set(0, 0.77, 0.31);
+    addAvatarFashion(body, head, style);
     const wrench = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.035, 0.035), new THREE.MeshStandardMaterial({ color: 0xcbd5e1, metalness: 0.8, roughness: 0.2 }));
     wrench.visible = false;
     const cigarette = new THREE.Mesh(
@@ -929,16 +1148,28 @@ export class ThreeOfficeScene {
       group.add(particle);
     });
     group.add(ring, body, head, visor, antenna, antennaLight, monitor, wrench, cigarette, ...legs, ...feet);
+    const avatar = this.avatarTemplate ? new GenZAvatar(this.avatarTemplate, style) : null;
+    if (avatar) {
+      group.add(avatar.group);
+      for (const object of [body, head, visor, antenna, antennaLight, monitor, ...arms, ...legs, ...feet]) object.visible = false;
+    }
+    const hitBox = new THREE.Mesh(new THREE.BoxGeometry(.85, 1.9, .65), new THREE.MeshBasicMaterial());
+    hitBox.position.y = .9;
+    hitBox.visible = false;
+    hitBox.userData.agentId = state.id;
+    group.add(hitBox);
     const idleActivity = IDLE_ACTIVITIES[this.agents.size % IDLE_ACTIVITIES.length];
     const label = makeLabel(state, idleActivity);
     label.position.y = 1.98;
     group.add(label);
-    group.position.copy(this.positionFor(state));
+    group.position.copy(this.navigation?.resolve(this.positionFor(state)) ?? this.positionFor(state));
     group.userData.agentId = state.id;
     body.userData.agentId = state.id;
     head.userData.agentId = state.id;
     this.world?.add(group);
     this.agents.set(state.id, {
+      avatar,
+      hitBox,
       state,
       group,
       body,
@@ -955,10 +1186,12 @@ export class ThreeOfficeScene {
       wrench,
       cigarette,
       smoke,
-      target: this.positionFor(state),
+      target: group.position.clone(),
+      path: [],
+      walkSpeed: 0,
       idleActivity,
       idleTargetIndex: this.agents.size % IDLE_POSITIONS.length,
-      nextIdleMove: 5 + Math.random() * 4,
+      nextIdleMove: this.elapsed + 5 + Math.random() * 4,
       phase: Math.random() * Math.PI * 2,
       selected: false,
     });
@@ -968,9 +1201,16 @@ export class ThreeOfficeScene {
     const visual = this.agents.get(id);
     if (visual === undefined) return;
     this.world?.remove(visual.group);
+    visual.avatar?.dispose();
     disposeObject(visual.group);
     this.agents.delete(id);
     if (this.selectedAgentId === id) this.selectAgent(null);
+    this.hasRendered = false;
+  }
+
+  private setDestination(visual: AgentVisual, target: THREE.Vector3): void {
+    visual.path = this.navigation?.route(visual.group.position, target) ?? [target.clone()];
+    visual.target.copy(visual.path.at(-1) ?? visual.group.position);
   }
 
   private positionFor(state: AgentState): THREE.Vector3 {
@@ -988,19 +1228,35 @@ export class ThreeOfficeScene {
     const width = Math.max(this.container.clientWidth, 1);
     const height = Math.max(this.container.clientHeight, 1);
     const aspect = width / height;
-    this.camera.left = -10 * aspect;
-    this.camera.right = 10 * aspect;
+    const halfHeight = Math.max(10, 13 / aspect);
+    this.camera.left = -halfHeight * aspect;
+    this.camera.right = halfHeight * aspect;
+    this.camera.top = halfHeight;
+    this.camera.bottom = -halfHeight;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(width, height);
+    this.hasRendered = false;
   }
 
+  private onPointerDown = (event: PointerEvent): void => {
+    this.pointers.add(event.pointerId);
+    if (this.pointers.size > 1) this.gestureMoved = true;
+    else { this.gestureStart = {x: event.clientX, y: event.clientY}; this.gestureMoved = false; }
+  };
+  private onPointerMove = (event: PointerEvent): void => {
+    if (this.gestureStart && Math.hypot(event.clientX - this.gestureStart.x, event.clientY - this.gestureStart.y) > 7) this.gestureMoved = true;
+  };
+  private onPointerCancel = (event: PointerEvent): void => { this.pointers.delete(event.pointerId); this.gestureMoved = true; };
   private onPointerUp = (event: PointerEvent): void => {
+    this.pointers.delete(event.pointerId);
+    if (!this.gestureStart || this.gestureMoved || this.pointers.size > 0) return;
+    this.gestureStart = null;
     if (this.renderer === null || this.camera === null) return;
     const bounds = this.renderer.domElement.getBoundingClientRect();
     this.pointer.x = ((event.clientX - bounds.left) / bounds.width) * 2 - 1;
     this.pointer.y = -((event.clientY - bounds.top) / bounds.height) * 2 + 1;
     this.raycaster.setFromCamera(this.pointer, this.camera);
-    const objects = [...this.agents.values()].flatMap((agent) => [agent.body, agent.head]);
+    const objects = [...this.agents.values()].map(agent => agent.hitBox);
     const hit = this.raycaster.intersectObjects(objects, false)[0];
     const id = hit?.object.userData.agentId as string | undefined;
     if (id === undefined) {
@@ -1009,27 +1265,42 @@ export class ThreeOfficeScene {
       return;
     }
     this.selectAgent(id);
+    this.onExternalAgentSelected?.(id);
     window.dispatchEvent(new CustomEvent("office:select-agent", { detail: { id } }));
   };
 
-  private animate = (): void => {
+  private animate = (time: number): void => {
     if (this.renderer === null || this.scene === null || this.camera === null) return;
-    const delta = Math.min(this.clock.getDelta(), 0.05);
-    const elapsed = this.clock.elapsedTime;
+    if (this.paused || document.hidden || time - this.lastFrameTime < 1000 / 30 - .5) {
+      if (this.paused || document.hidden) this.lastTick = time;
+      this.animationFrame = requestAnimationFrame(this.animate);
+      return;
+    }
+    this.lastFrameTime = time - ((time - this.lastFrameTime) % (1000 / 30));
+    const delta = Math.min((time - this.lastTick) / 1000, .1);
+    this.lastTick = time;
+    const elapsed = this.elapsed += delta;
     for (const visual of this.agents.values()) {
       if (visual.state.status === "idle" && elapsed >= visual.nextIdleMove && visual.group.position.distanceTo(visual.target) < 0.16) {
         const nextIndex = (visual.idleTargetIndex + 1) % IDLE_POSITIONS.length;
         visual.idleTargetIndex = nextIndex;
-        visual.target.copy(IDLE_POSITIONS[nextIndex]);
+        this.setDestination(visual, IDLE_POSITIONS[nextIndex]);
         visual.idleActivity = IDLE_ACTIVITIES[nextIndex];
         refreshLabel(visual.label, visual.state, visual.idleActivity);
         visual.nextIdleMove = elapsed + 7 + Math.random() * 6;
       }
       const distance = visual.group.position.distanceTo(visual.target);
-      const moving = distance > 0.12;
-      visual.group.position.x = THREE.MathUtils.damp(visual.group.position.x, visual.target.x, 1.45, delta);
-      visual.group.position.y = THREE.MathUtils.damp(visual.group.position.y, visual.target.y, 1.45, delta);
-      visual.group.position.z = THREE.MathUtils.damp(visual.group.position.z, visual.target.z, 1.45, delta);
+      const moving = visual.path.length > 0 && distance > 0.04;
+      visual.walkSpeed = THREE.MathUtils.damp(visual.walkSpeed, moving ? Math.min(1.05, Math.max(.25, distance * 1.8)) : 0, 5, delta);
+      const waypoint = visual.path[0] ?? visual.target;
+      const dx = waypoint.x - visual.group.position.x, dz = waypoint.z - visual.group.position.z;
+      const step = Math.min(visual.walkSpeed * delta, Math.hypot(dx, dz));
+      if (moving) {
+        const length = Math.max(Math.hypot(dx, dz), .001);
+        visual.group.position.x += dx / length * step;
+        visual.group.position.z += dz / length * step;
+        if (visual.group.position.distanceTo(waypoint) < .04) visual.path.shift();
+      } else visual.path.length = 0;
       const active = ACTIVE_STATUSES.has(visual.state.status);
       const bob = Math.sin(elapsed * (active ? 4.6 : 2.1) + visual.phase) * (active ? 0.045 : 0.022);
       const seated = WORK_STATUSES.has(visual.state.status) && !moving;
@@ -1038,6 +1309,8 @@ export class ThreeOfficeScene {
       const smokeCycle = (elapsed + visual.phase) % 3.6;
       const inhaling = smoking && smokeCycle < 0.7;
       const exhaling = smoking && smokeCycle >= 0.7 && smokeCycle < 2.9;
+      const pose: AvatarPose = moving ? "walk" : seated ? "work" : fixing ? "repair" : inhaling ? "smoke" : "idle";
+      visual.avatar?.update(delta, pose, smoking && !moving, visual.walkSpeed);
       const walking = moving;
       const repairSway = fixing ? Math.sin(elapsed * 2.4 + visual.phase) * 0.2 : 0;
       const bodyY = seated ? 0.55 : 0.68;
@@ -1053,8 +1326,6 @@ export class ThreeOfficeScene {
       visual.antennaLight.position.y = (seated ? 1.64 : 1.84) + bob * 0.5;
       visual.monitor.position.y = (seated ? 0.66 : 0.77) + bob * 0.5;
       if (walking) {
-        const dx = visual.target.x - visual.group.position.x;
-        const dz = visual.target.z - visual.group.position.z;
         const length = Math.max(Math.hypot(dx, dz), 0.001);
         const lateral = THREE.MathUtils.clamp(dx / length, -1, 1);
         const heading = Math.atan2(-dx, -dz);
@@ -1062,7 +1333,8 @@ export class ThreeOfficeScene {
         visual.body.rotation.z = -lateral * 0.16;
         visual.head.rotation.z = -lateral * 0.08;
       } else {
-        visual.group.rotation.y = dampAngle(visual.group.rotation.y, 0, 4, delta);
+        const facing = fixing ? Math.atan2(-(6 - visual.group.position.x), -(4.9 - visual.group.position.z)) : 0;
+        visual.group.rotation.y = dampAngle(visual.group.rotation.y, facing, 4, delta);
         visual.body.rotation.z = Math.sin(elapsed * 2.4 + visual.phase) * (active ? 0.045 : fixing ? 0.12 : 0.02);
         visual.head.rotation.z = 0;
       }
@@ -1093,14 +1365,15 @@ export class ThreeOfficeScene {
       visual.legs[1].position.y = 0.25 + Math.max(0, -stride) * 0.07;
       visual.feet[0].position.z = -0.08 + stride * 0.14;
       visual.feet[1].position.z = -0.08 - stride * 0.14;
-      visual.wrench.visible = fixing;
+      visual.wrench.visible = fixing && !visual.avatar;
       visual.wrench.position.set(0.3, 0.72 + Math.sin(elapsed * 5 + visual.phase) * 0.04, -0.28);
       visual.wrench.rotation.z = Math.sin(elapsed * 5 + visual.phase) * 0.45;
-      visual.cigarette.visible = smoking;
+      visual.cigarette.visible = smoking && !visual.avatar;
       visual.cigarette.position.set(inhaling ? 0.22 : 0.37, inhaling ? 1.16 : 0.88 + Math.sin(elapsed * 2 + visual.phase) * 0.03, -0.25);
       visual.cigarette.rotation.z = Math.PI / 2;
       visual.smoke.forEach((particle, index) => {
-        particle.visible = exhaling;
+        particle.visible = exhaling && !moving;
+        (particle.material as THREE.MeshBasicMaterial).opacity = Math.max(0, 1 - (smokeCycle - .7) / 2.2) * .5;
         particle.position.set(
           0.27 + Math.sin(elapsed * 1.8 + visual.phase + index) * 0.05,
           1.22 + ((smokeCycle * 0.22 + index * 0.18) % 0.58),
@@ -1114,8 +1387,15 @@ export class ThreeOfficeScene {
       const monitorMaterial = visual.monitor.material as THREE.MeshStandardMaterial;
       monitorMaterial.emissiveIntensity = active ? 1.8 + Math.sin(elapsed * 5 + visual.phase) * 0.45 : 0.8;
     }
-    this.controls?.update();
+    const cameraMoved = this.controls?.update();
+    if (this.agents.size === 0 && this.hasRendered && !cameraMoved) {
+      this.animationFrame = requestAnimationFrame(this.animate);
+      return;
+    }
     this.renderer.render(this.scene, this.camera);
+    this.hasRendered = true;
+    this.frames++;
+    if (time - this.metricsTime >= 1000) { this.fps = Math.round(this.frames * 1000 / (time - this.metricsTime)); this.frames = 0; this.metricsTime = time; }
     this.animationFrame = requestAnimationFrame(this.animate);
   };
 }

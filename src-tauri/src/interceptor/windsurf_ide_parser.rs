@@ -51,6 +51,7 @@ impl AgentLogParser for WindsurfIdeParser {
             completed_sub_agent_ids: vec![],
             timestamp,
             cwd: None,
+            activity: None,
         })
     }
 

@@ -4,12 +4,18 @@
 #[macro_use]
 mod logger;
 mod discovery;
+mod activity;
+mod managed_sessions;
+mod terminal_control;
 mod error;
 mod interceptor;
 mod ipc;
 mod models;
 
 use discovery::agent_registry::new_shared_registry;
+use activity::shared_activity_store;
+use managed_sessions::shared_managed_sessions;
+use managed_sessions::{attach_agent, deliver_queued};
 use discovery::log_reader::LogFileReader;
 use discovery::log_watcher::{run_log_watcher, RawLogLine};
 use discovery::process_scanner::{run_scanner, ScannerEvent};
@@ -22,10 +28,12 @@ use interceptor::parser_registry::ParserRegistry;
 use interceptor::parser_trait::AgentLogParser;
 use interceptor::state_classifier::{StateClassifier, TransitionResult};
 use ipc::commands::{
-    generate_bug_report, generate_remote_token, get_agent, get_all_agents, get_config,
-    get_remote_access, get_stats, set_config, start_remote_access, stop_remote_access, AppState,
+    create_managed_agent, generate_bug_report, generate_remote_token, get_agent,
+    get_agent_activities, get_all_agents, get_config, get_remote_access,
+    get_remote_capabilities, get_agent_control, get_stats, send_agent_message, set_config,
+    start_remote_access, stop_remote_access, AppState,
 };
-use models::AppConfig;
+use models::{AppConfig, ControlMode};
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
 
@@ -49,6 +57,9 @@ pub fn run() {
     );
     let config = Arc::new(RwLock::new(config));
 
+    let activities = shared_activity_store();
+    let managed_sessions = shared_managed_sessions(config.blocking_read().remote_workspaces.clone());
+
     // Initialize the shared agent registry
     let registry = new_shared_registry();
 
@@ -56,9 +67,12 @@ pub fn run() {
         Arc::clone(&registry),
         Arc::clone(&config),
         generate_remote_token(),
+        Arc::clone(&activities),
+        Arc::clone(&managed_sessions),
     );
     let remote_token = app_state.remote_token.clone();
     let remote_start_time = app_state.start_time;
+    let remote_control = Arc::clone(&app_state.remote_control_enabled);
 
     tauri::Builder::default()
         .plugin(tauri_plugin_shell::init())
@@ -70,6 +84,11 @@ pub fn run() {
             get_config,
             set_config,
             get_stats,
+            get_agent_activities,
+            get_remote_capabilities,
+            get_agent_control,
+            create_managed_agent,
+            send_agent_message,
             get_remote_access,
             start_remote_access,
             stop_remote_access,
@@ -179,6 +198,8 @@ pub fn run() {
             let handle_scanner = handle_for_scanner.clone();
             let config_for_scanner = Arc::clone(&config);
             let cwd_map_for_scanner = Arc::clone(&agent_cwd_map);
+            let sessions_for_scanner = Arc::clone(&managed_sessions);
+            let activities_for_scanner = Arc::clone(&activities);
             tauri::async_runtime::spawn(async move {
                 while let Some(event) = scanner_rx.recv().await {
                     let mut reg = registry_for_scanner.write().await;
@@ -190,13 +211,28 @@ pub fn run() {
                                 continue;
                             }
                             app_log!("SCANNER", "AgentFound: id={} name={} pid={:?} cwd={:?}", agent.id, agent.name, agent.pid, cwd);
+                            let mut agent = agent.clone();
+                            drop(reg);
+                            let connected = attach_agent(&agent, &sessions_for_scanner).await;
+                            reg = registry_for_scanner.write().await;
+                            agent.workspace_label = cwd.as_deref().and_then(|path| std::path::Path::new(path).file_name()).map(|name| name.to_string_lossy().to_string());
+                            if let Ok(session) = connected {
+                                agent.control_mode = if session.attached {ControlMode::Attached} else {ControlMode::Managed};
+                                agent.managed_session_id = Some(session.session_id);
+                            }
+                            if let Some((session, message)) = sessions_for_scanner.lock().ok().and_then(|mut sessions| sessions.take_queued_for_agent(&agent.id)) {
+                                tauri::async_runtime::spawn(deliver_queued(session, message, sessions_for_scanner.clone(), activities_for_scanner.clone()));
+                            }
                             if let Some(cwd_path) = cwd {
                                 cwd_map_for_scanner.write().await.insert(agent.id.clone(), cwd_path.clone());
                             }
-                            reg.register(agent.clone(), &handle_scanner);
+                            reg.register(agent, &handle_scanner);
                         }
                         ScannerEvent::AgentLost(ref id) => {
                             app_log!("SCANNER", "AgentLost: id={}", id);
+                            if let Ok(mut sessions) = sessions_for_scanner.lock() {
+                                sessions.mark_closed(id);
+                            }
                             cwd_map_for_scanner.write().await.remove(id);
                             reg.remove(id, &handle_scanner);
                         }
@@ -216,6 +252,8 @@ pub fn run() {
 
             let cwd_map_for_logs = Arc::clone(&agent_cwd_map);
             let parser_for_logs = Arc::clone(&parser_registry);
+            let activities_for_logs = Arc::clone(&activities);
+            let sessions_for_logs = Arc::clone(&managed_sessions);
             tauri::async_runtime::spawn(async move {
                 let (debounce_ms, idle_timeout_ms, work_timeout_ms, responding_timeout_ms) = {
                     let cfg = config_for_logs.read().await;
@@ -304,6 +342,7 @@ pub fn run() {
                         if is_updated || is_debounced || has_tokens || has_sub_agents || has_completed_subs {
                             let mut reg = registry_for_logs.write().await;
                             if let Some(mut agent) = reg.get(&agent_id) {
+                                let activity_title = event.activity.as_ref().map(|activity| activity.title.clone());
                                 if is_updated {
                                     agent.status = event.status;
                                     if let Some(model) = event.model {
@@ -314,6 +353,10 @@ pub fn run() {
                                     }
                                     if event.current_task.is_some() {
                                         agent.current_task = event.current_task;
+                                    }
+                                    agent.current_activity = activity_title.or_else(|| Some(format!("{:?}", agent.status)));
+                                    if matches!(agent.status, models::Status::Thinking) && agent.current_task.is_some() {
+                                        agent.current_goal = agent.current_task.clone();
                                     }
                                 }
                                 // Refresh last_activity on FSM updates, debounced
@@ -344,6 +387,17 @@ pub fn run() {
                                 app_log!("LOG_UPDATE", "agent {} → status {:?} tokens_in={} tokens_out={} sub_agents={}", agent_id, agent.status, agent.tokens_in, agent.tokens_out, agent.sub_agents.len());
                                 let current_status = agent.status.clone();
                                 reg.update(&agent_id, agent, &handle_for_logs);
+
+                                if let Some(activity) = event.activity {
+                                    if let Ok(mut store) = activities_for_logs.lock() {
+                                        store.append(&agent_id, &event.timestamp, current_status.clone(), activity);
+                                    }
+                                }
+                                if current_status == models::Status::TaskComplete {
+                                    if let Some((session, message)) = sessions_for_logs.lock().ok().and_then(|mut sessions| sessions.take_queued_for_agent(&agent_id)) {
+                                        tauri::async_runtime::spawn(deliver_queued(session,message,sessions_for_logs.clone(),activities_for_logs.clone()));
+                                    }
+                                }
 
                                 // Schedule auto-idle timer AFTER last_activity is set.
                                 // This ensures scheduled_at > last_activity, so the
@@ -450,12 +504,18 @@ pub fn run() {
                 .map(|cfg| cfg.extension_port.saturating_add(1))
                 .unwrap_or(7843);
             let remote_registry = Arc::clone(&registry);
+            let remote_activities = Arc::clone(&activities);
+            let remote_sessions = Arc::clone(&managed_sessions);
+            let remote_control = Arc::clone(&remote_control);
             tauri::async_runtime::spawn(async move {
                 ipc::remote_api::run_remote_server(
                     remote_port,
                     remote_registry,
                     remote_token,
                     remote_start_time,
+                    remote_activities,
+                    remote_sessions,
+                    remote_control,
                 )
                 .await;
             });
@@ -712,6 +772,11 @@ mod tests {
             status: Status::Idle,
             idle_location: IdleLocation::Desk,
             current_task: None,
+            current_goal: None,
+            current_activity: None,
+            control_mode: ControlMode::MonitorOnly,
+            workspace_label: None,
+            managed_session_id: None,
             tokens_in: 0,
             tokens_out: 0,
             sub_agents: vec![],

@@ -77,6 +77,10 @@ pub struct AppConfig {
     /// Default: 7842
     #[serde(default = "default_extension_port")]
     pub extension_port: u16,
+
+    /// Workspaces that managed remote agents may open.
+    #[serde(default = "default_remote_workspaces")]
+    pub remote_workspaces: Vec<PathBuf>,
 }
 
 fn default_scan_interval() -> u64 {
@@ -137,6 +141,10 @@ fn default_extension_port() -> u16 {
     7842
 }
 
+fn default_remote_workspaces() -> Vec<PathBuf> {
+    std::env::current_dir().ok().into_iter().collect()
+}
+
 fn default_log_roots() -> Vec<PathBuf> {
     dirs::home_dir()
         .map(|h| {
@@ -168,6 +176,7 @@ impl Default for AppConfig {
             debug_mode: false,
             custom_model_keywords: HashMap::new(),
             extension_port: default_extension_port(),
+            remote_workspaces: default_remote_workspaces(),
         }
     }
 }

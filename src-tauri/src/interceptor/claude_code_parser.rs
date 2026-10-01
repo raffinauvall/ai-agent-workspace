@@ -505,6 +505,7 @@ pub fn parse_line(line: &str) -> Option<ParsedEvent> {
         completed_sub_agent_ids,
         timestamp,
         cwd: entry.cwd,
+        activity: None,
     })
 }
 

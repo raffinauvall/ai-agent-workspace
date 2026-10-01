@@ -16,6 +16,10 @@ dist/
 src-tauri/target/
 src-tauri/gen/
 production/output/
+mobile/assets/office_scene/
+packaging/arch/pkg/
+packaging/arch/src/
+packaging/arch/*.pkg.tar.*
 
 # Logs
 logs/

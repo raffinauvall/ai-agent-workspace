@@ -1,4 +1,4 @@
-package com.example.office_ai_remote
+package com.officeai.remote
 
 import io.flutter.embedding.android.FlutterActivity
 

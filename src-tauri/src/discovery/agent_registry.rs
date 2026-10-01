@@ -163,7 +163,7 @@ pub fn new_shared_registry() -> SharedRegistry {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::models::{IdleLocation, Source, Status, Tier};
+    use crate::models::{ControlMode, IdleLocation, Source, Status, Tier};
 
     fn make_agent(id: &str, pid: u32) -> AgentState {
         AgentState {
@@ -176,6 +176,11 @@ mod tests {
             status: Status::Idle,
             idle_location: IdleLocation::Desk,
             current_task: None,
+            current_goal: None,
+            current_activity: None,
+            control_mode: ControlMode::MonitorOnly,
+            workspace_label: None,
+            managed_session_id: None,
             tokens_in: 100,
             tokens_out: 50,
             sub_agents: vec![],

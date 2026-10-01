@@ -9,7 +9,7 @@
 //     user_message    → Thinking
 //     agent_reasoning → Thinking
 //     agent_message   → Responding
-//     token_count     → (internal tracking, no status)
+//     token_count     → token heartbeat while the current turn is active
 //     task_complete   → TaskComplete
 //
 //   response_item subtypes (payload.type):
@@ -22,6 +22,7 @@
 //     message role=developer/user → (skip, system context)
 
 use super::parsed_event::ParsedEvent;
+use crate::activity::{ActivityInput, ActivityKind};
 use super::parser_trait::AgentLogParser;
 use crate::discovery::log_reader::{JsonlReader, LogFileReader};
 use crate::models::{Status, SubAgentInfo};
@@ -36,6 +37,9 @@ use std::sync::Mutex;
 /// - CWD lives in `session_meta`/`turn_context` but status events are separate
 /// - Tokens are cumulative — need delta tracking via `total_token_usage`
 struct ParserState {
+    /// Last status emitted for this session; token_count heartbeats use it to
+    /// keep long-running turns from looking idle.
+    last_status: Option<Status>,
     model: Option<String>,
     cwd: Option<String>,
     /// Latest cumulative input tokens from token_count events
@@ -70,6 +74,7 @@ impl CodexCliParser {
     pub fn new() -> Self {
         Self {
             state: Mutex::new(ParserState {
+                last_status: None,
                 model: None,
                 cwd: None,
                 cumulative_in: 0,
@@ -100,20 +105,41 @@ impl CodexCliParser {
                     .get("message")
                     .and_then(|m| m.as_str())
                     .map(|s| truncate_text(s, 200));
-                Some(self.make_event(Status::Thinking, message, timestamp))
+                let mut event = self.make_event(Status::Thinking, message.clone(), timestamp);
+                event.activity = Some(ActivityInput {
+                    kind: ActivityKind::Prompt,
+                    title: "Prompt".to_string(),
+                    detail: message,
+                });
+                Some(event)
             }
 
-            "agent_reasoning" => Some(self.make_event(Status::Thinking, None, timestamp)),
+            "agent_reasoning" => {
+                let mut event = self.make_event(Status::Thinking, None, timestamp);
+                event.activity = Some(ActivityInput {
+                    kind: ActivityKind::Reasoning,
+                    title: "Reasoning".to_string(),
+                    detail: None,
+                });
+                Some(event)
+            }
 
             "agent_message" => {
                 let message = payload
                     .get("message")
                     .and_then(|m| m.as_str())
                     .map(|s| truncate_text(s, 200));
-                Some(self.make_event(Status::Responding, message, timestamp))
+                let mut event = self.make_event(Status::Responding, message.clone(), timestamp);
+                event.activity = Some(ActivityInput {
+                    kind: ActivityKind::Response,
+                    title: "Response".to_string(),
+                    detail: message,
+                });
+                Some(event)
             }
 
             "token_count" => {
+                let mut has_usage = false;
                 if let Some(info) = payload.get("info") {
                     if let Some(total) = info.get("total_token_usage") {
                         let input = total
@@ -127,9 +153,25 @@ impl CodexCliParser {
                         let mut state = self.state.lock().unwrap();
                         state.cumulative_in = input;
                         state.cumulative_out = output;
+                        has_usage = true;
                     }
                 }
-                None
+                if !has_usage {
+                    return None;
+                }
+                let status = self.state.lock().unwrap().last_status.clone();
+                match status {
+                    Some(status @ (Status::Thinking | Status::Responding | Status::ToolUse)) => {
+                        let mut event = self.make_event(status, None, timestamp);
+                        event.activity = Some(ActivityInput {
+                            kind: ActivityKind::Reasoning,
+                            title: "Working".to_string(),
+                            detail: None,
+                        });
+                        Some(event)
+                    }
+                    _ => None,
+                }
             }
 
             "task_complete" => {
@@ -145,6 +187,7 @@ impl CodexCliParser {
 
                 let model = state.model.clone();
                 let cwd = state.cwd.clone();
+                state.last_status = Some(Status::TaskComplete);
 
                 let last_msg = payload
                     .get("last_agent_message")
@@ -154,13 +197,18 @@ impl CodexCliParser {
                 Some(ParsedEvent {
                     status: Status::TaskComplete,
                     model,
-                    current_task: last_msg,
+                    current_task: last_msg.clone(),
                     tokens_in: if delta_in > 0 { Some(delta_in) } else { None },
                     tokens_out: if delta_out > 0 { Some(delta_out) } else { None },
                     sub_agents: vec![],
                     completed_sub_agent_ids: vec![],
                     timestamp: timestamp.to_string(),
                     cwd,
+                    activity: last_msg.clone().map(|detail| ActivityInput {
+                        kind: ActivityKind::Response,
+                        title: "Response".to_string(),
+                        detail: Some(detail),
+                    }),
                 })
             }
 
@@ -223,6 +271,11 @@ impl CodexCliParser {
                         completed_sub_agent_ids: vec![],
                         timestamp: timestamp.to_string(),
                         cwd: state.cwd.clone(),
+                        activity: Some(ActivityInput {
+                            kind: ActivityKind::ToolStart,
+                            title: tool_name.to_string(),
+                            detail: None,
+                        }),
                     });
                 } else if tool_name == "wait_agent" {
                     // Synchronization primitive — no new sub-agents.
@@ -240,6 +293,11 @@ impl CodexCliParser {
                         completed_sub_agent_ids: vec![],
                         timestamp: timestamp.to_string(),
                         cwd: state.cwd.clone(),
+                        activity: Some(ActivityInput {
+                            kind: ActivityKind::ToolStart,
+                            title: "Waiting for sub-agents".to_string(),
+                            detail: None,
+                        }),
                     });
                 } else if tool_name == "exec_command" {
                     // Try to parse parallel bash commands from arguments
@@ -300,6 +358,11 @@ impl CodexCliParser {
                     completed_sub_agent_ids: vec![],
                     timestamp: timestamp.to_string(),
                     cwd: state.cwd.clone(),
+                    activity: Some(ActivityInput {
+                        kind: ActivityKind::ToolStart,
+                        title: tool_name.to_string(),
+                        detail: Some(format!("tool: {tool_name}")),
+                    }),
                 })
             }
 
@@ -361,6 +424,11 @@ impl CodexCliParser {
                             completed_sub_agent_ids: completed_ids,
                             timestamp: timestamp.to_string(),
                             cwd: state.cwd.clone(),
+                            activity: Some(ActivityInput {
+                                kind: ActivityKind::ToolResult,
+                                title: "Sub-agent started".to_string(),
+                                detail: Some(truncate_text(&original_message, 160)),
+                            }),
                         });
                     }
                 }
@@ -386,6 +454,11 @@ impl CodexCliParser {
                                     completed_sub_agent_ids: completed_ids,
                                     timestamp: timestamp.to_string(),
                                     cwd: state.cwd.clone(),
+                                    activity: Some(ActivityInput {
+                                        kind: ActivityKind::ToolResult,
+                                        title: "Sub-agents completed".to_string(),
+                                        detail: None,
+                                    }),
                                 });
                             }
                         }
@@ -415,6 +488,11 @@ impl CodexCliParser {
                     completed_sub_agent_ids: completed_ids,
                     timestamp: timestamp.to_string(),
                     cwd: state.cwd.clone(),
+                    activity: Some(ActivityInput {
+                        kind: ActivityKind::ToolResult,
+                        title: "Tool result".to_string(),
+                        detail: None,
+                    }),
                 })
             }
 
@@ -451,7 +529,8 @@ impl CodexCliParser {
         current_task: Option<String>,
         timestamp: &str,
     ) -> ParsedEvent {
-        let state = self.state.lock().unwrap();
+        let mut state = self.state.lock().unwrap();
+        state.last_status = Some(status.clone());
         ParsedEvent {
             status,
             model: state.model.clone(),
@@ -462,6 +541,7 @@ impl CodexCliParser {
             completed_sub_agent_ids: vec![],
             timestamp: timestamp.to_string(),
             cwd: state.cwd.clone(),
+            activity: None,
         }
     }
 }
@@ -882,6 +962,16 @@ mod tests {
     }
 
     #[test]
+    fn test_token_count_refreshes_active_turn() {
+        let parser = CodexCliParser::new();
+        parser.parse_line(EVENT_AGENT_REASONING);
+
+        let event = parser.parse_line(EVENT_TOKEN_COUNT).unwrap();
+        assert_eq!(event.status, Status::Thinking);
+        assert_eq!(event.activity.as_ref().map(|a| a.title.as_str()), Some("Working"));
+    }
+
+    #[test]
     fn test_parse_task_complete() {
         let parser = CodexCliParser::new();
         // Simulate a turn: token_count then task_complete
@@ -1135,7 +1225,9 @@ mod tests {
         assert_eq!(e.status, Status::Responding);
 
         // 8. Token count
-        assert!(parser.parse_line(EVENT_TOKEN_COUNT).is_none());
+        let e = parser.parse_line(EVENT_TOKEN_COUNT).unwrap();
+        assert_eq!(e.status, Status::Responding);
+        assert_eq!(e.activity.as_ref().map(|a| a.title.as_str()), Some("Working"));
 
         // 9. Task complete
         let e = parser.parse_line(EVENT_TASK_COMPLETE).unwrap();
